@@ -105,3 +105,14 @@ def extract_text_from_image():
         "status": "success",
         "extracted_text": extracted_text.strip()
     }
+
+
+
+# 1. extract text from image is done
+# 2. understand the extracted text, 
+    #   and try to come up with the relation between text and erpnext doctypes. 
+# 3. if the relation is found, then create a new document of the found doctype. 
+# 4. if the relation is not found, then return the return the extracted text and ask the user 
+    # to do which type of work next?
+# 5. all this in a simple minimal chat like interface.
+# 6. create a new page for this all chat interface. 
