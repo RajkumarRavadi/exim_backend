@@ -3,9 +3,148 @@ import json
 import os
 import requests
 from PIL import Image
+import hashlib
+import time
 
 # Import the existing image extraction function
 from exim_backend.api.image_reader import extract_text_from_image
+
+
+def estimate_tokens(text):
+	"""
+	Estimate token count (rough approximation: 1 token ≈ 4 characters for English).
+	More accurate: ~0.75 tokens per word or 4 characters per token.
+	"""
+	if not text:
+		return 0
+	# Rough estimation: 1 token ≈ 4 characters
+	return len(text) // 4
+
+
+def get_conversation_history(session_id, limit=10):
+	"""
+	Get conversation history for a session.
+	Stored in Frappe cache (session-based).
+	"""
+	if not session_id:
+		return []
+	
+	cache_key = f"ai_chat_history_{session_id}"
+	cached_data = frappe.cache().get(cache_key)
+	
+	if cached_data:
+		try:
+			# Handle bytes (decode to string first)
+			if isinstance(cached_data, bytes):
+				cached_data = cached_data.decode('utf-8')
+			
+			# Deserialize from JSON if it's a string
+			if isinstance(cached_data, str):
+				history = json.loads(cached_data)
+			elif isinstance(cached_data, list):
+				# Already a list (shouldn't happen but handle it)
+				history = cached_data
+			else:
+				history = []
+		except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
+			frappe.logger().error(f"Error deserializing history: {str(e)}")
+			history = []
+	else:
+		history = []
+	
+	# Return last N messages
+	return history[-limit:] if history else []
+
+
+def save_to_history(session_id, role, content):
+	"""
+	Save a message to conversation history.
+	"""
+	if not session_id:
+		return
+	
+	cache_key = f"ai_chat_history_{session_id}"
+	cached_data = frappe.cache().get(cache_key)
+	
+	if cached_data:
+		try:
+			# Handle bytes (decode to string first)
+			if isinstance(cached_data, bytes):
+				cached_data = cached_data.decode('utf-8')
+			
+			# Deserialize from JSON if it's a string
+			if isinstance(cached_data, str):
+				history = json.loads(cached_data)
+			elif isinstance(cached_data, list):
+				# Already a list (shouldn't happen but handle it)
+				history = cached_data
+			else:
+				history = []
+		except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
+			frappe.logger().error(f"Error deserializing history: {str(e)}")
+			history = []
+	else:
+		history = []
+	
+	history.append({
+		"role": role,
+		"content": content,
+		"timestamp": time.time()
+	})
+	
+	# Keep only last 20 messages to prevent memory issues
+	history = history[-20:]
+	
+	# Store in cache as JSON string (expires in 24 hours = 86400 seconds)
+	try:
+		history_json = json.dumps(history)
+		frappe.cache().set(cache_key, history_json)
+		frappe.cache().expire(cache_key, 86400)
+	except Exception as e:
+		frappe.logger().error(f"Error saving history to cache: {str(e)}")
+
+
+def clear_history(session_id):
+	"""Clear conversation history for a session."""
+	if session_id:
+		cache_key = f"ai_chat_history_{session_id}"
+		frappe.cache().delete(cache_key)
+
+
+def build_optimized_system_prompt(field_reference):
+	"""
+	Build optimized, concise system prompt.
+	Reduced from ~5000 to ~1500 tokens.
+	"""
+	return f"""You are an ERPNext AI assistant. Help users with customer data.
+
+CUSTOMER FIELDS:
+{field_reference}
+
+ACTIONS:
+1. DIRECT ANSWER - Answer from context (no JSON)
+2. dynamic_search - Query with filters: {{"action": "dynamic_search", "filters": {{"field": "value"}}, "execute_immediately": true}}
+3. get_customer_details - Full details: {{"action": "get_customer_details", "customer_name": "X", "execute_immediately": true}}
+4. find_duplicates - Same names: {{"action": "find_duplicates", "execute_immediately": true}}
+5. count_customers - Statistics: {{"action": "count_customers", "execute_immediately": true}}
+6. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
+
+FILTER OPERATORS:
+- {{"$like": "%text%"}} - Partial match
+- {{"$is_null": true}} - Missing/empty field
+- {{"$is_not_null": true}} - Has value
+- {{"field": "value"}} - Exact match
+
+EXAMPLES:
+Q: "Find Rajkumar" → {{"action": "dynamic_search", "filters": {{"customer_name": {{"$like": "%Rajkumar%"}}}}, "execute_immediately": true}}
+Q: "Customers without email" → {{"action": "dynamic_search", "filters": {{"email_id": {{"$is_null": true}}}}, "execute_immediately": true}}
+Q: "What's X's phone?" → Direct answer if known, else search
+
+RULES:
+- Return ONLY JSON for actions (no markdown)
+- Set execute_immediately: true for queries, false for creates
+- Use direct answers when possible (no JSON needed)
+- Think before acting - understand intent first"""
 
 
 def get_ai_config():
@@ -24,8 +163,18 @@ def get_ai_config():
 	}
 
 
-def call_ai_api(prompt, config):
-	"""Call AI API (supports both OpenRouter and direct Gemini)."""
+def call_ai_api(messages, config, stream=False):
+	"""
+	Call AI API with conversation history support.
+	
+	Args:
+		messages: List of message dicts with 'role' and 'content' keys
+		config: AI configuration dict
+		stream: Whether to stream the response (OpenRouter only)
+	
+	Returns:
+		Response text or generator for streaming
+	"""
 	if config["use_openrouter"]:
 		# Use OpenRouter API (OpenAI-compatible format)
 		headers = {
@@ -37,28 +186,54 @@ def call_ai_api(prompt, config):
 		
 		data = {
 			"model": config["model"],
-			"messages": [
-				{
-					"role": "user",
-					"content": prompt
-				}
-			]
+			"messages": messages,
+			"stream": stream
 		}
 		
-		response = requests.post(
-			"https://openrouter.ai/api/v1/chat/completions",
-			headers=headers,
-			json=data,
-			timeout=30
-		)
-		
-		if response.status_code != 200:
-			frappe.throw(f"OpenRouter API error: {response.status_code} - {response.text}")
-		
-		result = response.json()
-		return result["choices"][0]["message"]["content"]
+		if stream:
+			# For streaming, return the response object
+			response = requests.post(
+				"https://openrouter.ai/api/v1/chat/completions",
+				headers=headers,
+				json=data,
+				timeout=60,
+				stream=True
+			)
+			
+			if response.status_code != 200:
+				frappe.throw(f"OpenRouter API error: {response.status_code} - {response.text}")
+			
+			return response
+		else:
+			response = requests.post(
+				"https://openrouter.ai/api/v1/chat/completions",
+				headers=headers,
+				json=data,
+				timeout=60
+			)
+			
+			if response.status_code != 200:
+				frappe.throw(f"OpenRouter API error: {response.status_code} - {response.text}")
+			
+			result = response.json()
+			return result["choices"][0]["message"]["content"]
 	else:
 		# Use direct Google Gemini API
+		# Convert messages to single prompt (Gemini doesn't support message history well)
+		if len(messages) > 1:
+			# Combine system and user messages
+			prompt_parts = []
+			for msg in messages:
+				if msg["role"] == "system":
+					prompt_parts.append(f"System: {msg['content']}")
+				elif msg["role"] == "user":
+					prompt_parts.append(f"User: {msg['content']}")
+				elif msg["role"] == "assistant":
+					prompt_parts.append(f"Assistant: {msg['content']}")
+			prompt = "\n\n".join(prompt_parts)
+		else:
+			prompt = messages[0]["content"]
+		
 		import google.generativeai as genai
 		genai.configure(api_key=config["api_key"])
 		model = genai.GenerativeModel(config["model"])
@@ -70,18 +245,27 @@ def call_ai_api(prompt, config):
 def process_chat():
 	"""
 	Main chat endpoint that processes user messages and optional images.
+	Now supports conversation history, token counting, and streaming.
 	
 	API Endpoint: /api/method/exim_backend.api.ai_chat.process_chat
 	Accepts: 
 		- message (text): User's message
 		- image (file, optional): Image to extract text from
-	Returns: AI response with suggested actions
+		- session_id (text, optional): Session ID for conversation history
+		- clear_history (bool, optional): Clear conversation history
+	Returns: AI response with suggested actions, token usage info
 	"""
 	try:
 		message = frappe.form_dict.get("message", "").strip()
 		image_file = frappe.request.files.get("image")
+		session_id = frappe.form_dict.get("session_id") or frappe.session.get("sid") or "default"
+		clear_hist = frappe.form_dict.get("clear_history", "false").lower() == "true"
 		
-		frappe.logger().info(f"Chat request received - Message: {message[:50] if message else 'None'}, Has Image: {bool(image_file)}")
+		frappe.logger().info(f"Chat request - Session: {session_id[:10]}, Message: {message[:50] if message else 'None'}, Has Image: {bool(image_file)}")
+		
+		# Clear history if requested
+		if clear_hist:
+			clear_history(session_id)
 		
 		if not message and not image_file:
 			frappe.response["http_status_code"] = 400
@@ -112,15 +296,14 @@ def process_chat():
 			else:
 				message = f"{message}\n\nExtracted text from image: {extracted_text}"
 		
-		# Get AI configuration and process message
+		# Get AI configuration
 		config = get_ai_config()
 		
-		# Fetch Customer doctype field metadata for intelligent processing
+		# Fetch Customer doctype field metadata
 		try:
 			fields_response = get_doctype_fields()
 			if fields_response.get("status") == "success":
 				customer_fields = fields_response.get("fields", [])
-				# Build a concise field reference for AI
 				field_reference = "\n".join([
 					f"- {f['fieldname']} ({f['fieldtype']}){' [required]' if f.get('reqd') else ''}"
 					for f in customer_fields
@@ -132,219 +315,62 @@ def process_chat():
 			frappe.logger().error(f"Failed to fetch field metadata: {str(e)}")
 			field_reference = "Fields metadata not available"
 		
-		# Create system prompt for the AI
-		system_prompt = f"""You are an intelligent AI assistant for an ERPNext system. Your role is to:
-1. UNDERSTAND user intent deeply - think about what they REALLY want
-2. Provide CONVERSATIONAL and HELPFUL responses
-3. Execute actions ONLY when database queries are needed
-4. Answer DIRECTLY from context when possible
-
-=== CUSTOMER DOCTYPE FIELDS ===
-{field_reference}
-
-=== WHEN TO USE EACH ACTION ===
-A) DIRECT ANSWER - When you can answer from previous context or general knowledge
-   - Example: "What's Rajkumar's phone?" → Just say the number if you just fetched it
-   - Example: "When was customer created?" → Explain creation date if you have the details
-
-B) DYNAMIC SEARCH - When you need to query database with filters
-   - Example: "Find customers from India" → filters: {{"territory": "India"}}
-   - Example: "Show customers using USD" → filters: {{"default_currency": "USD"}}
-   - Example: "Find Rajkumar" → filters: {{"customer_name": {{"$like": "%Rajkumar%"}}}}
-   
-C) GET DETAILS - When user asks for complete details of a specific customer
-   - Example: "Show full details of Rajkumar" → get_customer_details
-   
-D) FIND DUPLICATES - When user asks about duplicate/same names
-   - Example: "Are there customers with same name?" → find_duplicates
-   - Example: "Show duplicate customers" → find_duplicates
-   
-E) COUNT - When user asks for statistics
-   - Example: "How many customers?" → count_customers
-
-F) CREATE - When user wants to create a new customer
-   - Example: "Create customer John" → create_document
-
-=== RESPONSE FORMAT for DIRECT ANSWER (NO action needed) ===
-Just respond naturally in plain text. NO JSON needed.
-
-Examples:
-- User: "What's Rajkumar's phone number?" → Response: "Rajkumar's phone number is 919381964965 📱"
-- User: "Are there customers with same name?" → Response: "Yes! I can see 'Sarah Johnson' appears twice in the results above."
-
-=== RESPONSE FORMAT for CREATE ===
-{{
-  "suggested_action": {{
-    "action": "create_document",
-    "doctype": "Customer",
-    "fields": {{
-      "customer_name": "John Doe",
-      "mobile_no": "1234567890",
-      "email_id": "john@example.com",
-      "default_currency": "USD",
-      "default_price_list": "Standard Selling",
-      "payment_terms": "Net 30",
-      "customer_primary_contact": "John Doe"
-    }},
-    "confidence": 0.95
-  }}
-}}
-
-=== RESPONSE FORMAT for DYNAMIC SEARCH (NEW - MOST INTELLIGENT) ===
-{{
-  "suggested_action": {{
-    "action": "dynamic_search",
-    "filters": {{
-      "territory": "United States",
-      "default_currency": "USD"
-    }},
-    "execute_immediately": true,
-    "confidence": 0.95
-  }}
-}}
-
-Example queries:
-- "Show me customers from United States" → filters: {{"territory": "United States"}}
-- "Find customers using USD currency" → filters: {{"default_currency": "USD"}}  
-- "List customers in India with INR" → filters: {{"territory": "India", "default_currency": "INR"}}
-- "Find Rajkumar" → filters: {{"customer_name": {{"$like": "%Rajkumar%"}}}}
-- "Customers with email containing gmail" → filters: {{"email_id": {{"$like": "%gmail%"}}}}
-
-CRITICAL: For "don't have", "missing", "not set", "without" queries:
-- "Customers without primary contact" → filters: {{"customer_primary_contact": {{"$is_null": true}}}}
-- "How many customers don't have a primary contact?" → filters: {{"customer_primary_contact": {{"$is_null": true}}}}
-- "Customers missing email" → filters: {{"email_id": {{"$is_null": true}}}}
-- "Customers with primary contact" → filters: {{"customer_primary_contact": {{"$is_not_null": true}}}}
-
-OPERATORS AVAILABLE:
-- {{"$like": "%text%"}} - Partial text match
-- {{"$is_null": true}} - Field is NULL, empty, or "Not Set"
-- {{"$is_not_null": true}} - Field has a value
-- {{"$gte": value}} - Greater than or equal
-- {{"$lte": value}} - Less than or equal
-- {{"$in": [val1, val2]}} - Value in list
-
-=== RESPONSE FORMAT for GET DETAILS (specific customer by exact name) ===
-{{
-  "suggested_action": {{
-    "action": "get_customer_details",
-    "customer_name": "Rajkumar",
-    "execute_immediately": true,
-    "confidence": 0.95
-  }}
-}}
-
-=== RESPONSE FORMAT for FIND DUPLICATES ===
-{{
-  "suggested_action": {{
-    "action": "find_duplicates",
-    "execute_immediately": true,
-    "confidence": 0.95
-  }}
-}}
-
-=== RESPONSE FORMAT for COUNT ===
-{{
-  "suggested_action": {{
-    "action": "count_customers",
-    "execute_immediately": true,
-    "confidence": 0.95
-  }}
-}}
-
-=== QUERY TYPE RECOGNITION ===
-✅ DIRECT ANSWER (just text, no JSON):
-- "What's X's phone?" → Answer directly if you know it
-- "When was X created?" → Answer from context if available
-- "Give me just the phone number" → Extract and provide specific info
-
-✅ DYNAMIC SEARCH (with JSON action):
-- "Find customers from X" → filters: {{"territory": "X"}}
-- "Show customers using X currency" → filters: {{"default_currency": "X"}}
-- "Search for X" → filters: {{"customer_name": {{"$like": "%X%"}}}}
-- "Customers without/don't have/missing X" → filters: {{"field_name": {{"$is_null": true}}}}
-- "Customers with X" (when X is a field) → filters: {{"field_name": {{"$is_not_null": true}}}}
-- "How many customers don't have X?" → filters: {{"field_name": {{"$is_null": true}}}}
-
-✅ GET DETAILS (with JSON action):
-- "Show full details of X" → get_customer_details
-
-✅ FIND DUPLICATES (with JSON action):
-- "Are there customers with same name?" → find_duplicates
-- "Show duplicate customers" → find_duplicates
-- "Find customers with exact same names" → find_duplicates
-
-✅ COUNT (with JSON action):
-- "How many customers?" (general count) → count_customers
-- "How many customers don't have X?" (filtered count) → dynamic_search with $is_null filter
-- "How many customers from X?" (filtered count) → dynamic_search with filter
-
-✅ CREATE (with JSON action):
-- "Create customer X" → create_document
-
-=== INTELLIGENCE RULES ===
-1. 🧠 THINK FIRST: Understand the user's question deeply
-   - "How many customers don't have X?" = Count customers where X field is NULL/empty
-   - "Customers without X" = Filter where X field is NULL/empty
-   - "Customers missing X" = Filter where X field is NULL/empty
-   - "Customers with X" = Filter where X field has a value (NOT NULL)
-
-2. 🔍 Need fresh data? → Use appropriate action with execute_immediately: true
-3. 📊 For specific info requests (phone, email, date) → Extract and answer directly if available
-4. 🎯 For filtering/searching → Use dynamic_search with smart filters
-5. ⚠️ For creating records → Use create_document with execute_immediately: false
-6. 🔢 Build filters intelligently based on field names from the field reference:
-   - Partial match: {{"fieldname": {{"$like": "%text%"}}}}
-   - Exact match: {{"fieldname": "exact_value"}}
-   - NULL/empty check: {{"fieldname": {{"$is_null": true}}}}
-   - Has value check: {{"fieldname": {{"$is_not_null": true}}}}
-   - Multiple criteria: {{"field1": "value1", "field2": {{"$is_null": true}}}}
-
-CRITICAL RULES:
-- 🎯 For DIRECT ANSWERS: Respond with plain conversational text (NO JSON)
-- 🔧 For ACTIONS: Return ONLY the JSON object as plain text (no markdown, no backticks)
-- ⚡ Set execute_immediately: true for queries, false for creates
-- 🧠 Be contextually aware - remember previous conversation
-
-EXAMPLE RESPONSES:
-
-📝 DIRECT ANSWERS (just text):
-Q: "What's Rajkumar's phone number?"
-A: Rajkumar's phone number is **919381964965** 📱
-
-Q: "Give me just Rajkumar's phone number"
-A: Rajkumar's phone number is **919381964965** 📱
-
-Q: "When did Rajkumar get created?"
-A: I'll need to fetch those details. Let me get the creation date for you.
-THEN: {{"suggested_action": {{"action": "get_customer_details", "customer_name": "Rajkumar", "execute_immediately": true, "confidence": 0.95}}}}
-
-🔍 ACTIONS (JSON):
-Q: "Find customer Rajkumar"
-A: {{"suggested_action": {{"action": "dynamic_search", "filters": {{"customer_name": {{"$like": "%Rajkumar%"}}}}, "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "Show customers from India"
-A: {{"suggested_action": {{"action": "dynamic_search", "filters": {{"territory": "India"}}, "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "How many customers don't have a primary contact?"
-A: {{"suggested_action": {{"action": "dynamic_search", "filters": {{"customer_primary_contact": {{"$is_null": true}}}}, "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "Customers without email"
-A: {{"suggested_action": {{"action": "dynamic_search", "filters": {{"email_id": {{"$is_null": true}}}}, "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "Are there customers with same name?"
-A: {{"suggested_action": {{"action": "find_duplicates", "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "How many customers"
-A: {{"suggested_action": {{"action": "count_customers", "execute_immediately": true, "confidence": 0.95}}}}
-
-Q: "Create customer John"
-A: {{"suggested_action": {{"action": "create_document", "doctype": "Customer", "fields": {{"customer_name": "John"}}, "execute_immediately": false, "confidence": 0.95}}}}
-
-User message: """ + message
+		# Build optimized system prompt
+		system_prompt = build_optimized_system_prompt(field_reference)
 		
-		# Generate response using AI
-		ai_response = call_ai_api(system_prompt, config)
+		# Get conversation history
+		history = get_conversation_history(session_id, limit=10)
+		
+		# Build messages array
+		messages = [{"role": "system", "content": system_prompt}]
+		
+		# Add conversation history
+		for h in history:
+			messages.append({"role": h["role"], "content": h["content"]})
+		
+		# Add current user message
+		messages.append({"role": "user", "content": message})
+		
+		# Calculate token usage
+		total_tokens = sum([estimate_tokens(msg["content"]) for msg in messages])
+		max_tokens = frappe.conf.get("ai_max_tokens", 8000)  # Default limit
+		
+		# Truncate history if too long
+		if total_tokens > max_tokens:
+			# Keep system prompt and current message, reduce history
+			excess = total_tokens - max_tokens
+			system_tokens = estimate_tokens(system_prompt)
+			user_tokens = estimate_tokens(message)
+			available_for_history = max_tokens - system_tokens - user_tokens - 500  # Buffer
+			
+			# Keep only recent history that fits
+			trimmed_history = []
+			history_tokens = 0
+			for h in reversed(history):
+				h_tokens = estimate_tokens(h["content"])
+				if history_tokens + h_tokens <= available_for_history:
+					trimmed_history.insert(0, h)
+					history_tokens += h_tokens
+				else:
+					break
+			
+			messages = [{"role": "system", "content": system_prompt}]
+			for h in trimmed_history:
+				messages.append({"role": h["role"], "content": h["content"]})
+			messages.append({"role": "user", "content": message})
+			total_tokens = sum([estimate_tokens(msg["content"]) for msg in messages])
+		
+		# Log token usage
+		frappe.logger().info(f"Token usage - Total: {total_tokens}, System: {estimate_tokens(system_prompt)}, History: {len(history)} msgs, User: {estimate_tokens(message)}")
+		
+		# Save user message to history
+		save_to_history(session_id, "user", message)
+		
+		# Generate response using AI with conversation history
+		ai_response = call_ai_api(messages, config, stream=False)
+		
+		# Save AI response to history
+		save_to_history(session_id, "assistant", ai_response)
 		
 		# Try to parse if there's a suggested action in the response
 		suggested_action = None
@@ -393,8 +419,11 @@ User message: """ + message
 			frappe.logger().error(f"Error parsing suggested action: {str(e)}")
 			pass
 		
+		# Calculate response tokens
+		response_tokens = estimate_tokens(ai_response)
+		
 		# Log for debugging
-		frappe.logger().info(f"AI Response length: {len(ai_response)}")
+		frappe.logger().info(f"AI Response length: {len(ai_response)}, Tokens: {response_tokens}")
 		frappe.logger().info(f"Suggested action found: {suggested_action is not None}")
 		if suggested_action:
 			frappe.logger().info(f"Suggested action details: {json.dumps(suggested_action)}")
@@ -403,7 +432,13 @@ User message: """ + message
 			"status": "success",
 			"message": ai_response,
 			"suggested_action": suggested_action,
-			"extracted_text": extracted_text if image_file else None
+			"extracted_text": extracted_text if image_file else None,
+			"token_usage": {
+				"input_tokens": total_tokens,
+				"output_tokens": response_tokens,
+				"total_tokens": total_tokens + response_tokens
+			},
+			"session_id": session_id
 		}
 		
 	except Exception as e:
@@ -411,6 +446,31 @@ User message: """ + message
 		return {
 			"status": "error",
 			"message": f"An error occurred: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def clear_chat_history():
+	"""
+	Clear conversation history for a session.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.clear_chat_history
+	Accepts:
+		- session_id: Session ID to clear history for
+	Returns: Success status
+	"""
+	try:
+		session_id = frappe.form_dict.get("session_id") or frappe.session.get("sid") or "default"
+		clear_history(session_id)
+		return {
+			"status": "success",
+			"message": "Conversation history cleared"
+		}
+	except Exception as e:
+		frappe.logger().error(f"Clear history error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to clear history: {str(e)}"
 		}
 
 

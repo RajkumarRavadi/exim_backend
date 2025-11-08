@@ -15,6 +15,14 @@
 	// State
 	let currentImage = null;
 	let isProcessing = false;
+	let sessionId = localStorage.getItem('ai_chat_session_id') || generateSessionId();
+	
+	// Generate or retrieve session ID
+	function generateSessionId() {
+		const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+		localStorage.setItem('ai_chat_session_id', id);
+		return id;
+	}
 
 	// Initialize
 	const init = () => {
@@ -28,6 +36,12 @@
 		uploadBtn.addEventListener('click', () => fileInput.click());
 		fileInput.addEventListener('change', handleImageUpload);
 		removeImage.addEventListener('click', handleRemoveImage);
+		
+		// Clear history button
+		const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+		if (clearHistoryBtn) {
+			clearHistoryBtn.addEventListener('click', handleClearHistory);
+		}
 		
 		messageInput.addEventListener('keydown', (e) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
@@ -78,6 +92,48 @@
 		previewImg.src = '';
 		currentImage = null;
 		fileInput.value = '';
+	};
+
+	// Handle clear history
+	const handleClearHistory = async () => {
+		if (!confirm('Are you sure you want to clear the conversation history?')) {
+			return;
+		}
+
+		try {
+			const formData = new FormData();
+			formData.append('session_id', sessionId);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.clear_chat_history', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const result = await response.json();
+			if (result.status === 'success' || (result.message && result.message.status === 'success')) {
+				// Clear chat messages (keep empty state)
+				chatMessages.innerHTML = `
+					<div class="empty-state">
+						<div class="empty-state-icon">💬</div>
+						<h3>Welcome to AI Assistant</h3>
+						<p>Send a message or upload an image to get started</p>
+					</div>
+				`;
+				showSuccess('Conversation history cleared');
+			} else {
+				showError('Failed to clear history');
+			}
+		} catch (error) {
+			console.error('Clear history error:', error);
+			showError('Failed to clear history. Please try again.');
+		}
 	};
 
 	// Handle send message
@@ -182,16 +238,23 @@
 				console.log('Clean message:', cleanMessage);
 				console.log('Passing suggested_action:', response.suggested_action);
 				
+				// Display token usage if available
+				if (response.token_usage) {
+					console.log('Token usage:', response.token_usage);
+					const tokenInfo = `📊 Tokens: ${response.token_usage.input_tokens} in + ${response.token_usage.output_tokens} out = ${response.token_usage.total_tokens} total`;
+					console.log(tokenInfo);
+				}
+				
 				// Check if action should be executed immediately
 				if (response.suggested_action && response.suggested_action.execute_immediately) {
 					console.log('Auto-executing action:', response.suggested_action.action);
 					// Don't show the message if it's just JSON remnants - let the action handler show results
 					if (cleanMessage && cleanMessage.length > 5 && !cleanMessage.match(/^[\s\w]*$/i)) {
-						addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', null);
+						addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', null, response.token_usage);
 					}
 					autoExecuteAction(response.suggested_action);
 				} else {
-					addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', response.suggested_action);
+					addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', response.suggested_action, response.token_usage);
 				}
 			} else {
 				showError(response.message || 'An error occurred');
@@ -235,6 +298,7 @@
 	const sendChatMessage = async (message, image) => {
 		const formData = new FormData();
 		formData.append('message', message);
+		formData.append('session_id', sessionId);
 		
 		if (image) {
 			formData.append('image', image);
@@ -267,7 +331,7 @@
 	};
 
 	// Add message to chat
-	const addMessage = (content, sender, suggestedAction = null) => {
+	const addMessage = (content, sender, suggestedAction = null, tokenUsage = null) => {
 		const messageDiv = document.createElement('div');
 		messageDiv.className = `message ${sender}`;
 
@@ -284,6 +348,14 @@
 		} else {
 			// For AI messages, allow HTML formatting
 			messageContent.innerHTML = content;
+			
+			// Add token usage display if available
+			if (tokenUsage) {
+				const tokenDiv = document.createElement('div');
+				tokenDiv.style.cssText = 'margin-top: 8px; font-size: 11px; color: #9ca3af; font-style: italic;';
+				tokenDiv.textContent = `📊 ${tokenUsage.input_tokens} in + ${tokenUsage.output_tokens} out = ${tokenUsage.total_tokens} tokens`;
+				messageContent.appendChild(tokenDiv);
+			}
 		}
 
 		messageDiv.appendChild(avatar);
@@ -921,6 +993,15 @@
 	// Show error message
 	const showError = (message) => {
 		addMessage(`❌ Error: ${message}`, 'ai');
+	};
+
+	const showSuccess = (message) => {
+		// Show temporary success message
+		const successDiv = document.createElement('div');
+		successDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #48bb78; color: white; padding: 12px 20px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
+		successDiv.textContent = `✅ ${message}`;
+		document.body.appendChild(successDiv);
+		setTimeout(() => successDiv.remove(), 3000);
 	};
 
 	// Scroll to bottom
