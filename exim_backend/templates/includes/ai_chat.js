@@ -182,6 +182,45 @@
 			const response = await sendChatMessage(messageToSend, imageToSend);
 			hideTypingIndicator();
 
+			// Log prompt information to browser console
+			if (response.prompt_info) {
+				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
+				console.log('%c📋 PROMPT SENT TO AI', 'color: #3b82f6; font-weight: bold; font-size: 16px;');
+				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
+				
+				const promptInfo = response.prompt_info;
+				
+				console.log('%c📊 Summary:', 'color: #10b981; font-weight: bold;');
+				console.log({
+					'Detected DocTypes': promptInfo.detected_doctypes,
+					'Total Messages': promptInfo.total_messages,
+					'History Count': promptInfo.history_count,
+					'System Prompt Length': `${promptInfo.system_prompt_length} chars (${promptInfo.system_prompt_tokens} tokens)`
+				});
+				
+				console.log('%c\n📝 System Prompt Preview:', 'color: #10b981; font-weight: bold;');
+				console.log(promptInfo.system_prompt_preview);
+				
+				console.log('%c\n📋 Messages Summary:', 'color: #10b981; font-weight: bold;');
+				promptInfo.messages_summary.forEach((msg, idx) => {
+					console.log(`%c[${idx + 1}] ${msg.role.toUpperCase()}`, 'color: #f59e0b; font-weight: bold;', {
+						'Content Preview': msg.content_preview,
+						'Length': `${msg.content_length} chars`,
+						'Tokens': msg.tokens
+					});
+				});
+				
+				console.log('%c\n📦 Full Messages Array:', 'color: #10b981; font-weight: bold;');
+				console.log(promptInfo.full_messages);
+				
+				console.log('%c\n💾 Full Prompt Info Object:', 'color: #10b981; font-weight: bold;');
+				console.log(promptInfo);
+				
+				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
+				console.log('%c✅ END OF PROMPT LOG', 'color: #3b82f6; font-weight: bold; font-size: 16px;');
+				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
+			}
+
 			console.log('API Response:', response);
 			console.log('Suggested action:', response.suggested_action);
 			console.log('Suggested action type:', typeof response.suggested_action);
@@ -519,53 +558,87 @@
 			}
 
 			const responseData = await response.json();
+			console.log('Create document - Raw response:', responseData);
+			
 			// Frappe wraps the response in a 'message' key
 			const result = responseData.message || responseData;
+			console.log('Create document - Parsed result:', result);
+			
 			hideTypingIndicator();
 
-			if (result.status === 'success') {
-				const link = result.document.link || '';
-				const linkText = link ? `\n\n🔗 View: ${window.location.origin}${link}` : `\nDocument ID: ${result.document.name}`;
-				addMessage(`✅ ${result.message}${linkText}`, 'ai');
+			if (result && result.status === 'success') {
+				// Build document link from name and doctype
+				const doctype = result.doctype || action.doctype || 'Customer';
+				const docName = result.name || (result.document && result.document.name);
+				
+				console.log('Create document - Extracted info:', { doctype, docName, result });
+				
+				let linkText = '';
+				if (docName) {
+					// Construct ERPNext document URL
+					const docUrl = `/app/${doctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(docName)}`;
+					linkText = `\n\n🔗 <a href="${docUrl}" target="_blank" style="color: #3b82f6; text-decoration: none;">View ${doctype} →</a>`;
+				} else {
+					linkText = `\n\n📄 Document created successfully`;
+				}
+				
+				const successMessage = result.message || `✅ ${doctype} created successfully`;
+				addMessage(`${successMessage}${linkText}`, 'ai');
 				
 				// Show success notification
-				console.log('Document created:', result.document);
+				console.log('✅ Document created successfully:', { doctype, name: docName, result });
 			} else {
-				addMessage(`❌ Error: ${result.message}`, 'ai');
+				// Handle error response
+				const errorMessage = result?.message || result?.error || 'Unknown error occurred';
+				console.error('❌ Create document failed:', result);
+				addMessage(`❌ Error: ${errorMessage}`, 'ai');
 			}
 		} catch (error) {
 			hideTypingIndicator();
-			showError('Failed to create document. Please try again.');
 			console.error('Create document error:', error);
+			console.error('Error stack:', error.stack);
+			
+			// Show more detailed error message
+			const errorMsg = error.message || 'Failed to create document. Please try again.';
+			addMessage(`❌ Error: ${errorMsg}`, 'ai');
+			showError(errorMsg);
 		}
 	};
 
 	// Auto-execute action
 	const autoExecuteAction = (action) => {
 		console.log('Auto-executing:', action);
+		const doctype = action.doctype || 'Customer'; // Default to Customer for backward compatibility
+		
 		if (action.action === 'dynamic_search') {
 			handleDynamicSearch(action);
+		} else if (action.action === 'get_document_details' || action.action === 'get_customer_details') {
+			handleGetDocumentDetails(action);
+		} else if (action.action === 'find_duplicates' || action.action === 'find_duplicate_customers') {
+			handleFindDuplicates(action);
+		} else if (action.action === 'count_documents' || action.action === 'count_customers') {
+			handleCountDocuments(action);
 		} else if (action.action === 'search_customer') {
+			// Legacy support
 			handleSearchCustomer(action);
-		} else if (action.action === 'get_customer_details') {
-			handleGetCustomerDetails(action);
-		} else if (action.action === 'find_duplicates') {
-			handleFindDuplicates();
-		} else if (action.action === 'count_customers') {
-			handleCountCustomers();
 		}
 	};
 
 	// Handle find duplicates
-	const handleFindDuplicates = async () => {
+	const handleFindDuplicates = async (action) => {
 		try {
 			showTypingIndicator();
+			const doctype = action?.doctype || 'Customer';
+			
+			const formData = new FormData();
+			formData.append('doctype', doctype);
 
-			const response = await fetch('/api/method/exim_backend.api.ai_chat.find_duplicate_customers', {
-				method: 'GET',
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.find_duplicates', {
+				method: 'POST',
 				headers: {
 					'X-Frappe-CSRF-Token': getCSRFToken()
-				}
+				},
+				body: formData
 			});
 
 			if (!response.ok) {
@@ -631,16 +704,24 @@
 		addMessage(message, 'ai');
 	};
 
-	// Handle count customers
-	const handleCountCustomers = async () => {
+	// Handle count documents
+	const handleCountDocuments = async (action) => {
 		try {
 			showTypingIndicator();
+			const doctype = action?.doctype || 'Customer';
+			
+			const formData = new FormData();
+			formData.append('doctype', doctype);
+			if (action?.filters) {
+				formData.append('filters', JSON.stringify(action.filters));
+			}
 
-			const response = await fetch('/api/method/exim_backend.api.ai_chat.count_customers', {
-				method: 'GET',
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.count_documents', {
+				method: 'POST',
 				headers: {
 					'X-Frappe-CSRF-Token': getCSRFToken()
-				}
+				},
+				body: formData
 			});
 
 			if (!response.ok) {
@@ -652,20 +733,26 @@
 			hideTypingIndicator();
 
 			if (result.status === 'success') {
-				displayCustomerCount(result);
+				displayCustomerCount(result, doctype);
 			} else {
 				addMessage(`❌ ${result.message}`, 'ai');
 			}
 		} catch (error) {
 			hideTypingIndicator();
-			showError('Failed to count customers. Please try again.');
+			showError(`Failed to count ${doctype.toLowerCase()}s. Please try again.`);
 			console.error('Count error:', error);
 		}
 	};
 
+	// Legacy handler for backward compatibility
+	const handleCountCustomers = async () => {
+		return handleCountDocuments({ doctype: 'Customer' });
+	};
+
 	// Display customer count
-	const displayCustomerCount = (result) => {
-		let message = `<p>You have <strong>${result.total_count} customer${result.total_count !== 1 ? 's' : ''}</strong> in total.</p>`;
+	const displayCustomerCount = (result, doctype = 'Customer') => {
+		const doctypeLabel = doctype.toLowerCase() + (doctype.toLowerCase().endsWith('s') ? '' : 's');
+		let message = `<p>You have <strong>${result.total_count} ${doctypeLabel}</strong> in total.</p>`;
 
 		if (result.by_territory && result.by_territory.length > 0) {
 			message += `<div style="margin-top: 12px;"><strong style="color: #1f2937;">By Territory:</strong><ul style="margin: 8px 0 0 20px; padding: 0; color: #4b5563;">`;
@@ -690,12 +777,14 @@
 	const handleDynamicSearch = async (action) => {
 		try {
 			showTypingIndicator();
+			const doctype = action?.doctype || 'Customer';
 
 			const formData = new FormData();
+			formData.append('doctype', doctype);
 			formData.append('filters', JSON.stringify(action.filters));
-			formData.append('limit', '20');
+			formData.append('limit', action?.limit || '20');
 
-			const response = await fetch('/api/method/exim_backend.api.ai_chat.dynamic_customer_search', {
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.dynamic_search', {
 				method: 'POST',
 				headers: {
 					'X-Frappe-CSRF-Token': getCSRFToken()
@@ -850,14 +939,21 @@
 	};
 
 	// Handle get customer details
-	const handleGetCustomerDetails = async (action) => {
+	const handleGetDocumentDetails = async (action) => {
 		try {
 			showTypingIndicator();
+			const doctype = action?.doctype || 'Customer';
+			const name = action?.name || action?.customer_name; // Support both formats
+
+			if (!name) {
+				throw new Error('Document name is required');
+			}
 
 			const formData = new FormData();
-			formData.append('customer_name', action.customer_name);
+			formData.append('doctype', doctype);
+			formData.append('name', name);
 
-			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_customer_details', {
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_document_details', {
 				method: 'POST',
 				headers: {
 					'X-Frappe-CSRF-Token': getCSRFToken()
@@ -874,15 +970,28 @@
 			hideTypingIndicator();
 
 			if (result.status === 'success') {
-				displayCustomerDetails(result.customer);
+				// Support both customer and generic document formats
+				const document = result.customer || result.document;
+				if (doctype === 'Customer') {
+					displayCustomerDetails(document);
+				} else {
+					// Generic display for other doctypes
+					displayDocumentDetails(document, doctype);
+				}
 			} else {
 				addMessage(`❌ ${result.message}`, 'ai');
 			}
 		} catch (error) {
 			hideTypingIndicator();
-			showError('Failed to get customer details. Please try again.');
+			showError('Failed to get document details. Please try again.');
 			console.error('Get details error:', error);
 		}
+	};
+
+	// Legacy handler for backward compatibility
+	const handleGetCustomerDetails = async (action) => {
+		action.doctype = 'Customer';
+		return handleGetDocumentDetails(action);
 	};
 
 	// Display customer details
@@ -954,6 +1063,35 @@
 		message += `<div style="margin-top: 12px;"><a href="${customerUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Customer →</a></div>`;
 		message += '</div>';
 
+		addMessage(message, 'ai');
+	};
+
+	// Display generic document details
+	const displayDocumentDetails = (document, doctype) => {
+		const docUrl = `${window.location.origin}/app/${doctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(document.name)}`;
+		const nameField = document.name || document[`${doctype.toLowerCase()}_name`] || document.name;
+		
+		let message = `<p>Here are the details for <strong>${escapeHtml(nameField)}</strong>:</p>`;
+		message += '<div style="margin-top: 12px;">';
+		
+		// Display key fields
+		const fieldsToShow = Object.keys(document).filter(key => 
+			!['name', 'doctype', 'creation', 'modified', 'modified_by', 'owner'].includes(key) &&
+			document[key] !== null && 
+			document[key] !== '' &&
+			typeof document[key] !== 'object'
+		).slice(0, 10); // Limit to first 10 fields
+		
+		fieldsToShow.forEach(field => {
+			const value = document[field];
+			if (value) {
+				message += `<div style="margin-bottom: 8px; font-size: 14px;"><span style="color: #6b7280; font-weight: 500;">${escapeHtml(field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</span> <span style="color: #1f2937;">${escapeHtml(String(value))}</span></div>`;
+			}
+		});
+		
+		message += `<div style="margin-top: 12px;"><a href="${docUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${doctype} →</a></div>`;
+		message += '</div>';
+		
 		addMessage(message, 'ai');
 	};
 

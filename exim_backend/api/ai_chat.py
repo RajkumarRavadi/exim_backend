@@ -111,23 +111,38 @@ def clear_history(session_id):
 		frappe.cache().delete(cache_key)
 
 
-def build_optimized_system_prompt(field_reference):
+def build_optimized_system_prompt(doctype_fields_map):
 	"""
-	Build optimized, concise system prompt.
-	Reduced from ~5000 to ~1500 tokens.
+	Build optimized, concise system prompt for multiple doctypes.
+	
+	Args:
+		doctype_fields_map: Dict of {doctype: field_reference_string}
 	"""
-	return f"""You are an ERPNext AI assistant. Help users with customer data.
+	# Build doctype sections
+	doctype_sections = []
+	for doctype, fields in doctype_fields_map.items():
+		if fields and fields != "Fields metadata not available":
+			doctype_sections.append(f"{doctype.upper()} FIELDS:\n{fields}")
+	
+	fields_section = "\n\n".join(doctype_sections) if doctype_sections else "No field metadata available"
+	
+	# Get available doctypes
+	from exim_backend.api.doctypes import get_available_doctypes
+	available_doctypes = ", ".join(get_available_doctypes())
+	
+	return f"""You are an ERPNext AI assistant. Help users with ERPNext data across multiple doctypes.
 
-CUSTOMER FIELDS:
-{field_reference}
+AVAILABLE DOCTYPES: {available_doctypes}
+
+{fields_section}
 
 ACTIONS:
 1. DIRECT ANSWER - Answer from context (no JSON)
-2. dynamic_search - Query with filters: {{"action": "dynamic_search", "filters": {{"field": "value"}}, "execute_immediately": true}}
-3. get_customer_details - Full details: {{"action": "get_customer_details", "customer_name": "X", "execute_immediately": true}}
-4. find_duplicates - Same names: {{"action": "find_duplicates", "execute_immediately": true}}
-5. count_customers - Statistics: {{"action": "count_customers", "execute_immediately": true}}
-6. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
+2. dynamic_search - Query with filters: {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"field": "value"}}, "execute_immediately": true}}
+3. get_document_details - Full details: {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
+4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
+5. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
+6. find_duplicates - Find duplicates (Customer only): {{"action": "find_duplicates", "doctype": "Customer", "execute_immediately": true}}
 
 FILTER OPERATORS:
 - {{"$like": "%text%"}} - Partial match
@@ -136,15 +151,18 @@ FILTER OPERATORS:
 - {{"field": "value"}} - Exact match
 
 EXAMPLES:
-Q: "Find Rajkumar" → {{"action": "dynamic_search", "filters": {{"customer_name": {{"$like": "%Rajkumar%"}}}}, "execute_immediately": true}}
-Q: "Customers without email" → {{"action": "dynamic_search", "filters": {{"email_id": {{"$is_null": true}}}}, "execute_immediately": true}}
+Q: "Find customer Rajkumar" → {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"customer_name": {{"$like": "%Rajkumar%"}}}}, "execute_immediately": true}}
+Q: "Customers without email" → {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"email_id": {{"$is_null": true}}}}, "execute_immediately": true}}
+Q: "Create supplier ABC Corp" → {{"action": "create_document", "doctype": "Supplier", "fields": {{"supplier_name": "ABC Corp"}}, "execute_immediately": false}}
+Q: "How many customers?" → {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
 Q: "What's X's phone?" → Direct answer if known, else search
 
 RULES:
+- ALWAYS specify doctype in action JSON
 - Return ONLY JSON for actions (no markdown)
 - Set execute_immediately: true for queries, false for creates
 - Use direct answers when possible (no JSON needed)
-- Think before acting - understand intent first"""
+- Think before acting - understand intent and doctype first"""
 
 
 def get_ai_config():
@@ -299,24 +317,45 @@ def process_chat():
 		# Get AI configuration
 		config = get_ai_config()
 		
-		# Fetch Customer doctype field metadata
-		try:
-			fields_response = get_doctype_fields()
-			if fields_response.get("status") == "success":
-				customer_fields = fields_response.get("fields", [])
-				field_reference = "\n".join([
-					f"- {f['fieldname']} ({f['fieldtype']}){' [required]' if f.get('reqd') else ''}"
-					for f in customer_fields
-					if not f.get('hidden') and f['fieldtype'] not in ['Section Break', 'Column Break', 'Tab Break']
-				])
-			else:
-				field_reference = "Fields metadata not available"
-		except Exception as e:
-			frappe.logger().error(f"Failed to fetch field metadata: {str(e)}")
-			field_reference = "Fields metadata not available"
+		# Detect doctypes from message or use default (Customer for now)
+		from exim_backend.api.doctypes import get_available_doctypes, get_handler
 		
-		# Build optimized system prompt
-		system_prompt = build_optimized_system_prompt(field_reference)
+		# Simple doctype detection from message
+		message_lower = message.lower()
+		detected_doctypes = []
+		
+		# Check for doctype mentions
+		doctype_keywords = {
+			"Customer": ["customer", "customers", "client", "clients"],
+			"Supplier": ["supplier", "suppliers", "vendor", "vendors"],
+			"Item": ["item", "items", "product", "products"],
+			"Lead": ["lead", "leads", "prospect", "prospects"],
+			"Sales Order": ["sales order", "sales orders", "so"],
+			"Purchase Order": ["purchase order", "purchase orders", "po"],
+		}
+		
+		available_doctypes = get_available_doctypes()
+		for doctype in available_doctypes:
+			keywords = doctype_keywords.get(doctype, [doctype.lower()])
+			if any(keyword in message_lower for keyword in keywords):
+				detected_doctypes.append(doctype)
+		
+		# Default to Customer if no doctype detected
+		if not detected_doctypes:
+			detected_doctypes = ["Customer"]
+		
+		# Fetch field metadata for detected doctypes
+		doctype_fields_map = {}
+		for doctype in detected_doctypes:
+			handler = get_handler(doctype)
+			if handler:
+				fields_info = handler.get_fields_info()
+				doctype_fields_map[doctype] = handler.build_field_reference(fields_info)
+			else:
+				doctype_fields_map[doctype] = "Fields metadata not available"
+		
+		# Build optimized system prompt with multiple doctypes
+		system_prompt = build_optimized_system_prompt(doctype_fields_map)
 		
 		# Get conversation history
 		history = get_conversation_history(session_id, limit=10)
@@ -362,6 +401,57 @@ def process_chat():
 		
 		# Log token usage
 		frappe.logger().info(f"Token usage - Total: {total_tokens}, System: {estimate_tokens(system_prompt)}, History: {len(history)} msgs, User: {estimate_tokens(message)}")
+		
+		# Log the exact prompt being sent to AI
+		frappe.logger().info("=" * 80)
+		frappe.logger().info("EXACT PROMPT BEING SENT TO AI")
+		frappe.logger().info("=" * 80)
+		frappe.logger().info(f"Session ID: {session_id[:20]}...")
+		frappe.logger().info(f"Detected DocTypes: {detected_doctypes}")
+		frappe.logger().info(f"Total Messages: {len(messages)}")
+		frappe.logger().info(f"Conversation History: {len(history)} messages")
+		frappe.logger().info("-" * 80)
+		
+		# Log each message in the array
+		for idx, msg in enumerate(messages, 1):
+			role = msg.get("role", "unknown")
+			content = msg.get("content", "")
+			content_preview = content[:200] + "..." if len(content) > 200 else content
+			token_count = estimate_tokens(content)
+			
+			frappe.logger().info(f"\n[{idx}] Role: {role.upper()} ({token_count} tokens)")
+			frappe.logger().info(f"Content Preview: {content_preview}")
+			
+			# For system prompt, log full content
+			if role == "system":
+				frappe.logger().info("Full System Prompt:")
+				frappe.logger().info("-" * 80)
+				frappe.logger().info(content)
+				frappe.logger().info("-" * 80)
+			# For history and user messages, log full content (they're usually shorter)
+			elif role in ["user", "assistant"]:
+				frappe.logger().info(f"Full Content:")
+				frappe.logger().info(content)
+		
+		frappe.logger().info("=" * 80)
+		frappe.logger().info("END OF PROMPT LOG")
+		frappe.logger().info("=" * 80)
+		
+		# Also log as JSON for easy parsing (truncated for very long content)
+		try:
+			# Create a version for logging (truncate very long content)
+			messages_for_log = []
+			for msg in messages:
+				msg_copy = msg.copy()
+				content = msg_copy.get("content", "")
+				if len(content) > 5000:
+					msg_copy["content"] = content[:5000] + f"\n... [TRUNCATED - {len(content)} total chars]"
+				messages_for_log.append(msg_copy)
+			
+			frappe.logger().info("Messages Array (JSON format, truncated if >5000 chars):")
+			frappe.logger().info(json.dumps(messages_for_log, indent=2, ensure_ascii=False))
+		except Exception as e:
+			frappe.logger().error(f"Error logging messages as JSON: {str(e)}")
 		
 		# Save user message to history
 		save_to_history(session_id, "user", message)
@@ -428,6 +518,26 @@ def process_chat():
 		if suggested_action:
 			frappe.logger().info(f"Suggested action details: {json.dumps(suggested_action)}")
 		
+		# Prepare prompt info for frontend logging
+		prompt_info = {
+			"detected_doctypes": detected_doctypes,
+			"total_messages": len(messages),
+			"history_count": len(history),
+			"system_prompt_preview": system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt,
+			"system_prompt_length": len(system_prompt),
+			"system_prompt_tokens": estimate_tokens(system_prompt),
+			"messages_summary": [
+				{
+					"role": msg.get("role"),
+					"content_preview": msg.get("content", "")[:200] + "..." if len(msg.get("content", "")) > 200 else msg.get("content", ""),
+					"content_length": len(msg.get("content", "")),
+					"tokens": estimate_tokens(msg.get("content", ""))
+				}
+				for msg in messages
+			],
+			"full_messages": messages  # Include full messages for detailed inspection
+		}
+		
 		return {
 			"status": "success",
 			"message": ai_response,
@@ -438,7 +548,8 @@ def process_chat():
 				"output_tokens": response_tokens,
 				"total_tokens": total_tokens + response_tokens
 			},
-			"session_id": session_id
+			"session_id": session_id,
+			"prompt_info": prompt_info  # Add prompt info for frontend logging
 		}
 		
 	except Exception as e:
@@ -563,7 +674,7 @@ def get_available_doctypes():
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def create_document():
 	"""
-	Create a new ERPNext document based on AI suggestion.
+	Create a new ERPNext document using doctype handlers.
 	
 	API Endpoint: /api/method/exim_backend.api.ai_chat.create_document
 	Accepts:
@@ -593,50 +704,33 @@ def create_document():
 		else:
 			fields = fields_json
 		
-		# Validate doctype exists
-		if not frappe.db.exists("DocType", doctype):
-			return {
-				"status": "error",
-				"message": f"DocType '{doctype}' does not exist"
-			}
+		# Get handler for this doctype
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler(doctype)
 		
-		# Handle specific doctypes with required fields
-		if doctype == "Customer":
-			fields = prepare_customer_data(fields)
-		elif doctype == "Supplier":
-			fields = prepare_supplier_data(fields)
-		elif doctype == "Item":
-			fields = prepare_item_data(fields)
-		elif doctype == "Lead":
-			fields = prepare_lead_data(fields)
-		
-		# Create new document
-		doc = frappe.get_doc({
-			"doctype": doctype,
-			**fields
-		})
-		
-		# Insert document
-		doc.insert(ignore_permissions=True)
-		
-		# If customer, create address if address fields provided
-		if doctype == "Customer" and any(key.startswith('address_') for key in fields.keys()):
-			try:
-				create_customer_address(doc.name, fields)
-			except Exception as e:
-				frappe.logger().error(f"Failed to create address: {str(e)}")
-		
-		frappe.db.commit()
-		
-		return {
-			"status": "success",
-			"message": f"{doctype} '{doc.name}' created successfully!",
-			"document": {
-				"name": doc.name,
+		if handler:
+			# Use handler to create document
+			return handler.create_document(fields)
+		else:
+			# Fallback to generic creation
+			if not frappe.db.exists("DocType", doctype):
+				return {
+					"status": "error",
+					"message": f"DocType '{doctype}' does not exist or handler not available"
+				}
+			
+			doc = frappe.get_doc({
 				"doctype": doctype,
-				"link": f"/app/{doctype.lower().replace(' ', '-')}/{doc.name}"
+				**fields
+			})
+			doc.insert(ignore_permissions=True)
+			
+			return {
+				"status": "success",
+				"message": f"{doctype} '{doc.name}' created successfully",
+				"name": doc.name,
+				"doctype": doctype
 			}
-		}
 		
 	except frappe.exceptions.ValidationError as e:
 		error_msg = str(e)
@@ -937,21 +1031,29 @@ def get_doctype_fields():
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def dynamic_customer_search():
+def dynamic_search():
 	"""
-	Dynamic customer search that builds queries based on AI-generated filters.
+	Generic dynamic search that uses doctype handlers.
 	
-	API Endpoint: /api/method/exim_backend.api.ai_chat.dynamic_customer_search
+	API Endpoint: /api/method/exim_backend.api.ai_chat.dynamic_search
 	Accepts:
+		- doctype: DocType name (required)
 		- filters: JSON object with field:value pairs
-		- limit: Number of results (default: 10)
+		- limit: Number of results (default: 20)
 		- order_by: Field to order by (default: modified desc)
-	Returns: Customers matching the dynamic filters
+	Returns: Documents matching the dynamic filters
 	"""
 	try:
+		doctype = frappe.form_dict.get("doctype")
 		filters_json = frappe.form_dict.get("filters")
-		limit = int(frappe.form_dict.get("limit", 10))
+		limit = int(frappe.form_dict.get("limit", 20))
 		order_by = frappe.form_dict.get("order_by", "modified desc")
+		
+		if not doctype:
+			return {
+				"status": "error",
+				"message": "DocType is required"
+			}
 		
 		if not filters_json:
 			return {
@@ -965,84 +1067,21 @@ def dynamic_customer_search():
 		else:
 			filters = filters_json
 		
-		frappe.logger().info(f"Dynamic search filters: {filters}")
+		# Get handler for this doctype
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler(doctype)
 		
-		# Build WHERE clause dynamically
-		conditions = []
-		values = {}
-		
-		for field, value in filters.items():
-			# Handle NULL/empty checks
-			if value is None or value == "":
-				# If value is explicitly None or empty string, skip (unless it's a NULL check)
-				continue
-			
-			# Handle different filter types
-			if isinstance(value, dict):
-				# Support operators: {"$like": "%text%"}, {"$is_null": true}, {"$is_not_null": true}, etc.
-				for operator, op_value in value.items():
-					if operator == "$like":
-						conditions.append(f"`{field}` LIKE %({field})s")
-						values[field] = op_value
-					elif operator == "$is_null":
-						# Field is NULL or empty
-						conditions.append(f"(`{field}` IS NULL OR `{field}` = '' OR `{field}` = 'Not Set')")
-					elif operator == "$is_not_null":
-						# Field is NOT NULL and not empty
-						conditions.append(f"(`{field}` IS NOT NULL AND `{field}` != '' AND `{field}` != 'Not Set')")
-					elif operator == "$gte":
-						conditions.append(f"`{field}` >= %({field})s")
-						values[field] = op_value
-					elif operator == "$lte":
-						conditions.append(f"`{field}` <= %({field})s")
-						values[field] = op_value
-					elif operator == "$in":
-						placeholders = ", ".join([f"%({field}_{i})s" for i in range(len(op_value))])
-						conditions.append(f"`{field}` IN ({placeholders})")
-						for i, v in enumerate(op_value):
-							values[f"{field}_{i}"] = v
-			else:
-				# Simple equality
-				conditions.append(f"`{field}` = %({field})s")
-				values[field] = value
-		
-		where_clause = " AND ".join(conditions) if conditions else "1=1"
-		
-		# Build and execute query
-		query = f"""
-			SELECT 
-				name,
-				customer_name,
-				customer_type,
-				mobile_no,
-				email_id,
-				customer_primary_contact,
-				territory,
-				customer_group,
-				default_currency,
-				default_price_list,
-				payment_terms,
-				creation,
-				modified
-			FROM `tabCustomer`
-			WHERE {where_clause}
-			ORDER BY {order_by}
-			LIMIT %(limit)s
-		"""
-		
-		values["limit"] = limit
-		
-		frappe.logger().info(f"Executing query: {query}")
-		frappe.logger().info(f"With values: {values}")
-		
-		customers = frappe.db.sql(query, values, as_dict=True)
-		
-		return {
-			"status": "success",
-			"count": len(customers),
-			"customers": customers,
-			"filters_applied": filters
-		}
+		if handler:
+			result = handler.dynamic_search(filters, limit, order_by)
+			# Rename 'results' to doctype-specific name for backward compatibility
+			if doctype == "Customer" and "results" in result:
+				result["customers"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": f"Handler not available for doctype '{doctype}'"
+			}
 		
 	except Exception as e:
 		frappe.logger().error(f"Dynamic search error: {str(e)}")
@@ -1052,56 +1091,47 @@ def dynamic_customer_search():
 		}
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
-def find_duplicate_customers():
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def dynamic_customer_search():
 	"""
-	Find customers with duplicate names.
+	Legacy endpoint for backward compatibility.
+	Routes to dynamic_search with doctype=Customer.
+	"""
+	doctype = frappe.form_dict.get("doctype", "Customer")
+	frappe.form_dict["doctype"] = doctype
+	return dynamic_search()
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def find_duplicates():
+	"""
+	Generic find duplicates using doctype handlers.
 	
-	API Endpoint: /api/method/exim_backend.api.ai_chat.find_duplicate_customers
-	Returns: Customers that have duplicate names
+	API Endpoint: /api/method/exim_backend.api.ai_chat.find_duplicates
+	Accepts:
+		- doctype: DocType name (required)
+	Returns: Duplicate documents
 	"""
 	try:
-		# Find duplicate customer names
-		query = """
-			SELECT 
-				customer_name,
-				COUNT(*) as count,
-				GROUP_CONCAT(name SEPARATOR ', ') as customer_ids
-			FROM `tabCustomer`
-			GROUP BY customer_name
-			HAVING COUNT(*) > 1
-			ORDER BY count DESC
-		"""
+		doctype = frappe.form_dict.get("doctype")
 		
-		duplicates = frappe.db.sql(query, as_dict=True)
+		if not doctype:
+			return {
+				"status": "error",
+				"message": "DocType is required"
+			}
 		
-		# Get detailed info for each duplicate
-		duplicate_details = []
-		for dup in duplicates:
-			customer_ids = dup['customer_ids'].split(', ')
-			customers = []
-			
-			for cust_id in customer_ids:
-				customer = frappe.db.get_value(
-					"Customer",
-					cust_id,
-					["name", "customer_name", "mobile_no", "email_id", "territory", "customer_group"],
-					as_dict=True
-				)
-				if customer:
-					customers.append(customer)
-			
-			duplicate_details.append({
-				"customer_name": dup['customer_name'],
-				"count": dup['count'],
-				"customers": customers
-			})
+		# Get handler for this doctype
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler(doctype)
 		
-		return {
-			"status": "success",
-			"duplicate_count": len(duplicates),
-			"duplicates": duplicate_details
-		}
+		if handler and hasattr(handler, 'find_duplicates'):
+			return handler.find_duplicates()
+		else:
+			return {
+				"status": "error",
+				"message": f"Find duplicates not supported for doctype '{doctype}'"
+			}
 		
 	except Exception as e:
 		frappe.logger().error(f"Find duplicates error: {str(e)}")
@@ -1112,164 +1142,160 @@ def find_duplicate_customers():
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
-def count_customers():
+def find_duplicate_customers():
 	"""
-	Count total customers or by specific criteria.
+	Legacy endpoint for backward compatibility.
+	Routes to find_duplicates with doctype=Customer.
+	"""
+	frappe.form_dict["doctype"] = "Customer"
+	return find_duplicates()
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def count_documents():
+	"""
+	Generic count documents using doctype handlers.
 	
-	API Endpoint: /api/method/exim_backend.api.ai_chat.count_customers
-	Returns: Customer count
+	API Endpoint: /api/method/exim_backend.api.ai_chat.count_documents
+	Accepts:
+		- doctype: DocType name (required)
+		- filters: Optional filters (JSON)
+	Returns: Document count
 	"""
 	try:
-		# Get total count
-		total_count = frappe.db.count("Customer")
+		doctype = frappe.form_dict.get("doctype")
+		filters_json = frappe.form_dict.get("filters")
 		
-		# Get count by territory
-		territory_counts = frappe.db.sql("""
-			SELECT territory, COUNT(*) as count
-			FROM `tabCustomer`
-			WHERE territory IS NOT NULL AND territory != ''
-			GROUP BY territory
-			ORDER BY count DESC
-			LIMIT 5
-		""", as_dict=True)
+		if not doctype:
+			return {
+				"status": "error",
+				"message": "DocType is required"
+			}
 		
-		# Get count by customer group
-		group_counts = frappe.db.sql("""
-			SELECT customer_group, COUNT(*) as count
-			FROM `tabCustomer`
-			WHERE customer_group IS NOT NULL AND customer_group != ''
-			GROUP BY customer_group
-			ORDER BY count DESC
-			LIMIT 5
-		""", as_dict=True)
+		# Parse filters if provided
+		filters = None
+		if filters_json:
+			if isinstance(filters_json, str):
+				filters = json.loads(filters_json)
+			else:
+				filters = filters_json
 		
-		return {
-			"status": "success",
-			"total_count": total_count,
-			"by_territory": territory_counts,
-			"by_group": group_counts
-		}
+		# Get handler for this doctype
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler(doctype)
+		
+		if handler:
+			# Use handler's count method, or custom method if available
+			if doctype == "Customer" and hasattr(handler, 'count_with_breakdown'):
+				return handler.count_with_breakdown()
+			else:
+				return handler.count_documents(filters)
+		else:
+			# Fallback to generic count
+			if filters:
+				# Use dynamic_search to count
+				frappe.form_dict["filters"] = filters_json
+				frappe.form_dict["limit"] = 10000
+				result = dynamic_search()
+				if result.get("status") == "success":
+					return {
+						"status": "success",
+						"total_count": result.get("count", 0)
+					}
+			else:
+				total = frappe.db.count(doctype)
+				return {
+					"status": "success",
+					"total_count": total
+				}
 		
 	except Exception as e:
-		frappe.logger().error(f"Count customers error: {str(e)}")
+		frappe.logger().error(f"Count documents error: {str(e)}")
 		return {
 			"status": "error",
-			"message": f"Failed to count customers: {str(e)}"
+			"message": f"Failed to count documents: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def count_customers():
+	"""
+	Legacy endpoint for backward compatibility.
+	Routes to count_documents with doctype=Customer.
+	"""
+	frappe.form_dict["doctype"] = "Customer"
+	return count_documents()
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def get_document_details():
+	"""
+	Generic get document details using doctype handlers.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_document_details
+	Accepts:
+		- doctype: DocType name (required)
+		- name: Document name/ID (required)
+	Returns: Document details
+	"""
+	try:
+		doctype = frappe.form_dict.get("doctype")
+		name = frappe.form_dict.get("name", "").strip()
+		
+		if not doctype:
+			return {
+				"status": "error",
+				"message": "DocType is required"
+			}
+		
+		if not name:
+			return {
+				"status": "error",
+				"message": "Document name is required"
+			}
+		
+		# Get handler for this doctype
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler(doctype)
+		
+		if handler:
+			result = handler.get_document_details(name)
+			# Rename 'document' to doctype-specific name for backward compatibility
+			if doctype == "Customer" and "document" in result:
+				result["customer"] = result.pop("document")
+			return result
+		else:
+			# Fallback to generic retrieval
+			if not frappe.db.exists(doctype, name):
+				return {
+					"status": "error",
+					"message": f"{doctype} '{name}' not found"
+				}
+			
+			doc = frappe.get_doc(doctype, name)
+			return {
+				"status": "success",
+				"document": doc.as_dict()
+			}
+		
+	except Exception as e:
+		frappe.logger().error(f"Get document details error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get details: {str(e)}"
 		}
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def get_customer_details():
 	"""
-	Get detailed information about a specific customer.
-	
-	API Endpoint: /api/method/exim_backend.api.ai_chat.get_customer_details
-	Accepts:
-		- customer_name: Customer ID or name
-	Returns: Customer details
+	Legacy endpoint for backward compatibility.
+	Routes to get_document_details with doctype=Customer.
 	"""
-	try:
-		customer_name = frappe.form_dict.get("customer_name", "").strip()
-		
-		if not customer_name:
-			return {
-				"status": "error",
-				"message": "Customer name is required"
-			}
-		
-		# Get customer document
-		if not frappe.db.exists("Customer", customer_name):
-			# Try to find by customer_name field
-			customer_id = frappe.db.get_value("Customer", {"customer_name": customer_name}, "name")
-			if customer_id:
-				customer_name = customer_id
-			else:
-				return {
-					"status": "error",
-					"message": f"Customer '{customer_name}' not found"
-				}
-		
-		customer = frappe.get_doc("Customer", customer_name)
-		
-		# Get primary address if exists
-		address = None
-		address_links = frappe.get_all(
-			"Dynamic Link",
-			filters={
-				"link_doctype": "Customer",
-				"link_name": customer.name,
-				"parenttype": "Address"
-			},
-			fields=["parent"],
-			limit=1
-		)
-		
-		if address_links:
-			address_doc = frappe.get_doc("Address", address_links[0].parent)
-			address = {
-				"address_line1": address_doc.address_line1,
-				"address_line2": address_doc.address_line2,
-				"city": address_doc.city,
-				"state": address_doc.state,
-				"country": address_doc.country,
-				"pincode": address_doc.pincode
-			}
-		
-		# Get primary contact if exists
-		contact = None
-		contact_links = frappe.get_all(
-			"Dynamic Link",
-			filters={
-				"link_doctype": "Customer",
-				"link_name": customer.name,
-				"parenttype": "Contact"
-			},
-			fields=["parent"],
-			limit=1
-		)
-		
-		if contact_links:
-			contact_doc = frappe.get_doc("Contact", contact_links[0].parent)
-			contact = {
-				"name": contact_doc.name,
-				"first_name": contact_doc.first_name,
-				"last_name": contact_doc.last_name,
-				"email_id": contact_doc.email_id,
-				"mobile_no": contact_doc.mobile_no,
-				"phone": contact_doc.phone
-			}
-		
-		# Prepare response
-		customer_data = {
-			"name": customer.name,
-			"customer_name": customer.customer_name,
-			"customer_type": customer.customer_type,
-			"customer_group": customer.customer_group,
-			"territory": customer.territory,
-			"mobile_no": customer.mobile_no,
-			"email_id": customer.email_id,
-			"customer_primary_contact": customer.customer_primary_contact,
-			"default_currency": customer.default_currency,
-			"default_price_list": customer.default_price_list,
-			"payment_terms": customer.payment_terms,
-			"sales_team": [{"sales_person": st.sales_person, "allocated_percentage": st.allocated_percentage} for st in customer.sales_team] if customer.sales_team else [],
-			"address": address,
-			"contact": contact,
-			"creation": str(customer.creation),
-			"modified": str(customer.modified)
-		}
-		
-		return {
-			"status": "success",
-			"customer": customer_data
-		}
-		
-	except Exception as e:
-		frappe.logger().error(f"Get customer details error: {str(e)}")
-		return {
-			"status": "error",
-			"message": f"Failed to get customer details: {str(e)}"
-		}
+	customer_name = frappe.form_dict.get("customer_name", "").strip()
+	frappe.form_dict["doctype"] = "Customer"
+	frappe.form_dict["name"] = customer_name
+	return get_document_details()
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
