@@ -287,11 +287,23 @@
 				// Check if action should be executed immediately
 				if (response.suggested_action && response.suggested_action.execute_immediately) {
 					console.log('Auto-executing action:', response.suggested_action.action);
-					// Don't show the message if it's just JSON remnants - let the action handler show results
-					if (cleanMessage && cleanMessage.length > 5 && !cleanMessage.match(/^[\s\w]*$/i)) {
+					// Don't show the message if it contains phrases indicating the AI can't do something
+					// or if it's asking the user to do something (since we'll do it automatically)
+					const skipMessage = cleanMessage && (
+						cleanMessage.toLowerCase().includes("i cannot") ||
+						cleanMessage.toLowerCase().includes("i need") ||
+						cleanMessage.toLowerCase().includes("please provide") ||
+						cleanMessage.toLowerCase().includes("could you") ||
+						cleanMessage.toLowerCase().includes("if you give me") ||
+						cleanMessage.toLowerCase().includes("however if you") ||
+						cleanMessage.match(/^[\s\w]*$/i) // Just whitespace/words (likely JSON remnants)
+					);
+					
+					if (!skipMessage && cleanMessage && cleanMessage.length > 5) {
 						addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', null, response.token_usage);
 					}
-					autoExecuteAction(response.suggested_action);
+					// Pass the original user message for context
+					autoExecuteAction(response.suggested_action, message);
 				} else {
 					addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', response.suggested_action, response.token_usage);
 				}
@@ -606,14 +618,20 @@
 	};
 
 	// Auto-execute action
-	const autoExecuteAction = (action) => {
+	// Store the original user question for context
+	let lastUserQuestion = '';
+	
+	const autoExecuteAction = (action, originalQuestion = '') => {
 		console.log('Auto-executing:', action);
+		if (originalQuestion) {
+			lastUserQuestion = originalQuestion;
+		}
 		const doctype = action.doctype || 'Customer'; // Default to Customer for backward compatibility
 		
 		if (action.action === 'dynamic_search') {
 			handleDynamicSearch(action);
 		} else if (action.action === 'get_document_details' || action.action === 'get_customer_details') {
-			handleGetDocumentDetails(action);
+			handleGetDocumentDetails(action, lastUserQuestion);
 		} else if (action.action === 'find_duplicates' || action.action === 'find_duplicate_customers') {
 			handleFindDuplicates(action);
 		} else if (action.action === 'count_documents' || action.action === 'count_customers') {
@@ -802,7 +820,7 @@
 			hideTypingIndicator();
 
 			if (result.status === 'success') {
-				displayDynamicSearchResults(result);
+				displayDynamicSearchResults(result, doctype);
 			} else {
 				addMessage(`⚠️ Search failed: ${result.message}`, 'ai');
 			}
@@ -814,49 +832,102 @@
 	};
 
 	// Display dynamic search results
-	const displayDynamicSearchResults = (result) => {
+	const displayDynamicSearchResults = (result, doctype = null) => {
 		// Log filters to console for debugging (not shown to user)
 		if (result.filters_applied && Object.keys(result.filters_applied).length > 0) {
 			console.log('🔍 Filters Applied:', result.filters_applied);
 		}
 
+		// Detect doctype from result keys (customers, items, etc.)
+		let detectedDoctype = doctype;
+		let resultsKey = null;
+		let results = [];
+		
+		// Find the results array (could be customers, items, etc.)
+		for (const key in result) {
+			if (Array.isArray(result[key]) && key !== 'filters_applied') {
+				resultsKey = key;
+				results = result[key];
+				// Infer doctype from key (customers -> Customer, items -> Item)
+				if (!detectedDoctype) {
+					detectedDoctype = key.charAt(0).toUpperCase() + key.slice(1, -1); // Remove 's' and capitalize
+				}
+				break;
+			}
+		}
+		
+		// Fallback to count if no array found
+		if (!results.length && result.count) {
+			results = result.results || [];
+		}
+		
+		const doctypeLabel = detectedDoctype ? detectedDoctype.toLowerCase() + (result.count !== 1 ? 's' : '') : 'items';
+		const doctypeSingular = detectedDoctype ? detectedDoctype.toLowerCase() : 'item';
+
 		let message = '';
 
-		if (result.count > 0) {
+		if (result.count > 0 && results.length > 0) {
 			// Friendly introduction
 			if (result.count === 1) {
-				message += `<p>I found <strong>${result.count} customer</strong> matching your search:</p>`;
+				message += `<p>I found <strong>${result.count} ${doctypeSingular}</strong> matching your search:</p>`;
 			} else {
-				message += `<p>I found <strong>${result.count} customers</strong> matching your search:</p>`;
+				message += `<p>I found <strong>${result.count} ${doctypeLabel}</strong> matching your search:</p>`;
 			}
 
-			// Display customers in a clean, readable format
+			// Display results in a clean, readable format
 			message += '<div style="margin-top: 12px;">';
-			result.customers.forEach((customer, index) => {
-				const customerName = customer.customer_name || customer.name;
-				const customerUrl = `${window.location.origin}/app/customer/${encodeURIComponent(customer.name)}`;
+			results.forEach((item, index) => {
+				// Determine name field based on doctype
+				let itemName = '';
+				let itemUrl = '';
+				
+				if (detectedDoctype === 'Customer') {
+					itemName = item.customer_name || item.name;
+					itemUrl = `${window.location.origin}/app/customer/${encodeURIComponent(item.name)}`;
+				} else if (detectedDoctype === 'Item') {
+					itemName = item.item_name || item.item_code || item.name;
+					itemUrl = `${window.location.origin}/app/item/${encodeURIComponent(item.name)}`;
+				} else {
+					itemName = item.name || item[`${detectedDoctype.toLowerCase()}_name`] || 'Unknown';
+					itemUrl = `${window.location.origin}/app/${detectedDoctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(item.name)}`;
+				}
 				
 				message += `<div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
-				message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(customerName)}</div>`;
+				message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(itemName)}</div>`;
 				
-				// Build info line with available details
+				// Build info line with available details (doctype-specific)
 				const details = [];
-				if (customer.mobile_no) details.push(`<span style="color: #4b5563;">Phone: ${escapeHtml(customer.mobile_no)}</span>`);
-				if (customer.email_id) details.push(`<span style="color: #4b5563;">Email: ${escapeHtml(customer.email_id)}</span>`);
-				if (customer.territory) details.push(`<span style="color: #4b5563;">Territory: ${escapeHtml(customer.territory)}</span>`);
-				if (customer.customer_group) details.push(`<span style="color: #4b5563;">Group: ${escapeHtml(customer.customer_group)}</span>`);
-				if (customer.default_currency) details.push(`<span style="color: #4b5563;">Currency: ${escapeHtml(customer.default_currency)}</span>`);
+				if (detectedDoctype === 'Customer') {
+					if (item.mobile_no) details.push(`<span style="color: #4b5563;">📱 ${escapeHtml(item.mobile_no)}</span>`);
+					if (item.email_id) details.push(`<span style="color: #4b5563;">📧 ${escapeHtml(item.email_id)}</span>`);
+					if (item.territory) details.push(`<span style="color: #4b5563;">🌍 ${escapeHtml(item.territory)}</span>`);
+					if (item.customer_group) details.push(`<span style="color: #4b5563;">👥 ${escapeHtml(item.customer_group)}</span>`);
+					if (item.default_currency) details.push(`<span style="color: #4b5563;">💰 ${escapeHtml(item.default_currency)}</span>`);
+				} else if (detectedDoctype === 'Item') {
+					if (item.item_code) details.push(`<span style="color: #4b5563;">Code: ${escapeHtml(item.item_code)}</span>`);
+					if (item.item_group) details.push(`<span style="color: #4b5563;">Group: ${escapeHtml(item.item_group)}</span>`);
+					if (item.stock_uom) details.push(`<span style="color: #4b5563;">UOM: ${escapeHtml(item.stock_uom)}</span>`);
+					if (item.standard_rate) details.push(`<span style="color: #4b5563;">Price: ${escapeHtml(item.standard_rate)}</span>`);
+					if (item.brand) details.push(`<span style="color: #4b5563;">Brand: ${escapeHtml(item.brand)}</span>`);
+				} else {
+					// Generic display for other doctypes
+					Object.keys(item).slice(0, 5).forEach(key => {
+						if (key !== 'name' && item[key] && typeof item[key] !== 'object') {
+							details.push(`<span style="color: #4b5563;">${escapeHtml(key)}: ${escapeHtml(String(item[key]))}</span>`);
+						}
+					});
+				}
 				
 				if (details.length > 0) {
 					message += `<div style="font-size: 13px; margin-bottom: 8px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 				}
 				
-				message += `<a href="${customerUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Customer →</a>`;
+				message += `<a href="${itemUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${detectedDoctype || 'Item'} →</a>`;
 				message += `</div>`;
 			});
 			message += '</div>';
 		} else {
-			message = `<p>I couldn't find any customers matching your search criteria.</p><p style="margin-top: 8px; color: #6b7280;">💡 Try adjusting your search terms or filters.</p>`;
+			message = `<p>I couldn't find any ${doctypeLabel} matching your search criteria.</p><p style="margin-top: 8px; color: #6b7280;">💡 Try adjusting your search terms or filters.</p>`;
 		}
 
 		addMessage(message, 'ai');
@@ -938,8 +1009,152 @@
 		addMessage(message, 'ai');
 	};
 
+	// Answer user's question based on document data using AI
+	const answerQuestionFromDocument = async (document, doctype, question) => {
+		try {
+			showTypingIndicator();
+			
+			// Create a clean summary of the document for the AI
+			const documentSummary = {
+				doctype: doctype,
+				name: document.name || document.item_code || document[`${doctype.toLowerCase()}_name`] || 'Unknown',
+				// Include all relevant fields, but format nicely
+				data: document
+			};
+			
+			// Create a focused prompt for the AI
+			// Format the document data more intelligently, especially for nested structures like uoms
+			let formattedData = '';
+			
+			// Helper to extract text from HTML description
+			const extractTextFromHTML = (html) => {
+				if (!html) return 'N/A';
+				// Remove HTML tags and decode entities
+				return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+			};
+			
+			if (doctype === 'Item') {
+				// Format Item data nicely for better AI understanding
+				const itemName = document.item_name || document.item_code || document.name;
+				const description = extractTextFromHTML(document.description);
+				const uomsInfo = document.uoms && Array.isArray(document.uoms) && document.uoms.length > 0
+					? document.uoms.map(uom => `- ${uom.uom}: conversion_factor = ${uom.conversion_factor}`).join('\n')
+					: 'None';
+				
+				// Include stock-related quantities if available
+				const stockInfo = document.stock && Array.isArray(document.stock) && document.stock.length > 0
+					? document.stock.map(s => 
+						`  Warehouse: ${s.warehouse || 'N/A'}, Actual Qty: ${s.actual_qty || 0}, Projected Qty: ${s.projected_qty || 0}`
+					  ).join('\n')
+					: 'No stock information available';
+				
+				formattedData = `Item Information:
+- Item Name/Code: ${itemName}
+- Description: ${description}
+- Item Group: ${document.item_group || 'N/A'}
+- Stock UOM: ${document.stock_uom || 'N/A'}
+- Standard Rate: ${document.standard_rate || 0}
+- Is Stock Item: ${document.is_stock_item ? 'Yes' : 'No'}
+- Total Projected Quantity: ${document.total_projected_qty !== undefined ? document.total_projected_qty : 'N/A'}
+
+Available UOMs with Conversion Factors:
+${uomsInfo}
+
+Stock Information:
+${stockInfo}
+
+Full Document Data (for complete reference):
+${JSON.stringify(documentSummary, null, 2)}`;
+			} else {
+				formattedData = `${doctype} Document Data:
+${JSON.stringify(documentSummary, null, 2)}`;
+			}
+			
+			const prompt = `You have the complete ${doctype} document data. Answer the user's question by extracting the specific information requested from the data below. Be direct, concise, and accurate. Only provide what was asked for.
+
+${formattedData}
+
+User's Question: ${question}
+
+Instructions:
+- Extract the exact information requested from the document data above
+- For UOMs and conversion factors, look in the "uoms" array or the formatted UOMs section above
+- For descriptions, look in the "description" field (HTML tags have been removed)
+- For quantities (projected qty, actual qty, etc.), look in the "total_projected_qty" field or "stock" array
+- For total_projected_qty, use the value shown in "Total Projected Quantity" above
+- Be specific and provide the exact values - if a value is 0, say "0", don't say it's not available
+- If asking about multiple items (e.g., "all UOMs"), list them clearly
+- Format your answer clearly and concisely
+- IMPORTANT: If the data shows a value (even if it's 0), provide that value directly. Don't say you can't find it.`;
+			
+			const formData = new FormData();
+			formData.append('message', prompt);
+			
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.process_chat', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+			
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+			
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			
+			hideTypingIndicator();
+			
+			// The process_chat API returns: {status: "success", message: "AI response", ...}
+			if (result && (result.status === 'success' || result.message)) {
+				const aiAnswer = result.message || 'No answer provided';
+				// Clean the answer (remove JSON code blocks if present)
+				let cleanAnswer = aiAnswer.replace(/```json[\s\S]*?```/g, '').replace(/```[\s\S]*?```/g, '').trim();
+				// Remove any remaining JSON structure if it's just the action
+				cleanAnswer = cleanAnswer.replace(/^\s*\{[\s\S]*"action"[\s\S]*\}\s*$/g, '').trim();
+				
+				if (cleanAnswer && cleanAnswer.length > 0) {
+					addMessage(`<p>${escapeHtml(cleanAnswer)}</p>`, 'ai', null, result.token_usage);
+				} else {
+					// If AI didn't provide a good answer, fallback to generic display
+					console.warn('AI answer was empty or invalid, falling back to generic display');
+					if (doctype === 'Item') {
+						displayDocumentDetails(document, doctype);
+					} else if (doctype === 'Customer') {
+						displayCustomerDetails(document);
+					} else {
+						displayDocumentDetails(document, doctype);
+					}
+				}
+			} else {
+				// Fallback to generic display if AI fails
+				console.warn('AI answer failed, falling back to generic display');
+				if (doctype === 'Item') {
+					displayDocumentDetails(document, doctype);
+				} else if (doctype === 'Customer') {
+					displayCustomerDetails(document);
+				} else {
+					displayDocumentDetails(document, doctype);
+				}
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			console.error('Error getting AI answer from document:', error);
+			// Fallback to generic display on error
+			if (doctype === 'Item') {
+				displayDocumentDetails(document, doctype);
+			} else if (doctype === 'Customer') {
+				displayCustomerDetails(document);
+			} else {
+				displayDocumentDetails(document, doctype);
+			}
+		}
+	};
+
 	// Handle get customer details
-	const handleGetDocumentDetails = async (action) => {
+	const handleGetDocumentDetails = async (action, originalQuestion = '') => {
 		try {
 			showTypingIndicator();
 			const doctype = action?.doctype || 'Customer';
@@ -962,24 +1177,131 @@
 			});
 
 			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
+				const errorText = await response.text();
+				console.error('HTTP error response:', response.status, errorText);
+				throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
 			}
 
 			const responseData = await response.json();
+			console.log('Raw API responseData:', responseData);
+			
 			const result = responseData.message || responseData;
+			
+			// Debug logging - ALWAYS log this
+			console.log('═══════════════════════════════════════════════════════');
+			console.log('📋 GET DOCUMENT DETAILS API RESPONSE');
+			console.log('═══════════════════════════════════════════════════════');
+			console.log('Full responseData:', JSON.stringify(responseData, null, 2));
+			console.log('Extracted result:', JSON.stringify(result, null, 2));
+			console.log('Result status:', result?.status);
+			console.log('Result keys:', result ? Object.keys(result) : 'result is null/undefined');
+			console.log('Doctype:', doctype);
+			console.log('Name:', name);
+			console.log('═══════════════════════════════════════════════════════');
+			
 			hideTypingIndicator();
 
+			// Validate result exists
+			if (!result) {
+				console.error('❌ CRITICAL: result is null/undefined!');
+				addMessage(`❌ Error: No response received from server.`, 'ai');
+				return;
+			}
+
+			// Handle both success and error cases
 			if (result.status === 'success') {
-				// Support both customer and generic document formats
-				const document = result.customer || result.document;
+				// Support doctype-specific and generic document formats
+				// Try different possible keys based on doctype
+				let document = null;
 				if (doctype === 'Customer') {
-					displayCustomerDetails(document);
+					document = result.customer || result.document;
+				} else if (doctype === 'Item') {
+					document = result.item || result.document;
 				} else {
-					// Generic display for other doctypes
-					displayDocumentDetails(document, doctype);
+					// Generic: try doctype-specific key first, then generic
+					const doctypeKey = doctype.toLowerCase();
+					document = result[doctypeKey] || result.document;
+				}
+				
+				console.log('Extracted document:', document);
+				console.log('Document type:', typeof document);
+				console.log('Full result structure:', JSON.stringify(result, null, 2));
+				
+				// Check if document exists and is a valid object
+				if (!document || typeof document !== 'object' || Array.isArray(document)) {
+					console.error('Document is invalid. Full result:', result);
+					const errorDetails = result.message || 'Document data is missing or invalid';
+					addMessage(`❌ ${errorDetails}`, 'ai');
+					return;
+				}
+				
+				// Validate document has at least a name or identifier
+				if (!document.name && !document.item_code && !document[`${doctype.toLowerCase()}_name`]) {
+					console.error('Document missing identifier. Document:', document);
+					addMessage(`❌ Document data is incomplete. Missing identifier.`, 'ai');
+					return;
+				}
+				
+				// Final safety check before calling display functions
+				if (!document || typeof document !== 'object' || Array.isArray(document)) {
+					console.error('Final validation failed - document is invalid before display:', { 
+						document, 
+						doctype, 
+						result,
+						documentType: typeof document,
+						isArray: Array.isArray(document)
+					});
+					addMessage(`❌ Error: Invalid document data received from server. Please check console for details.`, 'ai');
+					return;
+				}
+				
+				// Additional check: ensure document has required properties
+				if (doctype === 'Item' && !document.name && !document.item_code && !document.item_name) {
+					console.error('Item document missing all identifiers:', document);
+					addMessage(`❌ Error: Item document is missing required fields (name, item_code, item_name).`, 'ai');
+					return;
+				}
+				
+				// If original question exists, send document data to AI to answer the specific question
+				if (originalQuestion && originalQuestion.trim()) {
+					console.log('Original question detected, sending to AI for intelligent extraction:', originalQuestion);
+					await answerQuestionFromDocument(document, doctype, originalQuestion);
+				} else {
+					// Call display functions with additional safety (fallback to generic display)
+					try {
+						if (doctype === 'Customer') {
+							if (typeof displayCustomerDetails === 'function') {
+								displayCustomerDetails(document);
+							} else {
+								throw new Error('displayCustomerDetails function not found');
+							}
+						} else if (doctype === 'Item') {
+							// Final check before calling - document must exist and be valid
+							if (!document || typeof document !== 'object') {
+								throw new Error(`Document is ${document === null ? 'null' : typeof document} - cannot display`);
+							}
+							if (typeof displayDocumentDetails === 'function') {
+								displayDocumentDetails(document, doctype);
+							} else {
+								throw new Error('displayDocumentDetails function not found');
+							}
+						} else {
+							if (typeof displayDocumentDetails === 'function') {
+								displayDocumentDetails(document, doctype);
+							} else {
+								throw new Error('displayDocumentDetails function not found');
+							}
+						}
+					} catch (displayError) {
+						console.error('Error calling display function:', displayError, { document, doctype });
+						addMessage(`❌ Error displaying document: ${displayError.message || 'Unknown error'}`, 'ai');
+					}
 				}
 			} else {
-				addMessage(`❌ ${result.message}`, 'ai');
+				// Handle error response
+				const errorMsg = result.message || 'Unknown error occurred';
+				console.error('API returned error status:', result);
+				addMessage(`❌ ${errorMsg}`, 'ai');
 			}
 		} catch (error) {
 			hideTypingIndicator();
@@ -1068,31 +1390,53 @@
 
 	// Display generic document details
 	const displayDocumentDetails = (document, doctype) => {
-		const docUrl = `${window.location.origin}/app/${doctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(document.name)}`;
-		const nameField = document.name || document[`${doctype.toLowerCase()}_name`] || document.name;
-		
-		let message = `<p>Here are the details for <strong>${escapeHtml(nameField)}</strong>:</p>`;
-		message += '<div style="margin-top: 12px;">';
-		
-		// Display key fields
-		const fieldsToShow = Object.keys(document).filter(key => 
-			!['name', 'doctype', 'creation', 'modified', 'modified_by', 'owner'].includes(key) &&
-			document[key] !== null && 
-			document[key] !== '' &&
-			typeof document[key] !== 'object'
-		).slice(0, 10); // Limit to first 10 fields
-		
-		fieldsToShow.forEach(field => {
-			const value = document[field];
-			if (value) {
-				message += `<div style="margin-bottom: 8px; font-size: 14px;"><span style="color: #6b7280; font-weight: 500;">${escapeHtml(field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</span> <span style="color: #1f2937;">${escapeHtml(String(value))}</span></div>`;
+		try {
+			// Validate document exists and is a valid object
+			if (!document || typeof document !== 'object' || Array.isArray(document)) {
+				console.error('displayDocumentDetails: document is invalid', { document, doctype });
+				addMessage(`❌ Error: Document data is missing or invalid.`, 'ai');
+				return;
 			}
-		});
-		
-		message += `<div style="margin-top: 12px;"><a href="${docUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${doctype} →</a></div>`;
-		message += '</div>';
-		
-		addMessage(message, 'ai');
+			
+			// Validate doctype
+			if (!doctype || typeof doctype !== 'string') {
+				console.error('displayDocumentDetails: doctype is invalid', { document, doctype });
+				addMessage(`❌ Error: Invalid document type.`, 'ai');
+				return;
+			}
+			
+			// Get document name/ID - handle different doctype naming conventions
+			// Use optional chaining and nullish coalescing for safety
+			const docName = document?.name || document?.item_code || document?.[`${doctype.toLowerCase()}_name`] || 'Unknown';
+			const docUrl = `${window.location.origin}/app/${doctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(docName)}`;
+			const nameField = document?.item_name || document?.name || document?.[`${doctype.toLowerCase()}_name`] || docName;
+			
+			let message = `<p>Here are the details for <strong>${escapeHtml(nameField)}</strong>:</p>`;
+			message += '<div style="margin-top: 12px;">';
+			
+			// Display key fields
+			const fieldsToShow = Object.keys(document).filter(key => 
+				!['name', 'doctype', 'creation', 'modified', 'modified_by', 'owner'].includes(key) &&
+				document[key] !== null && 
+				document[key] !== '' &&
+				typeof document[key] !== 'object'
+			).slice(0, 10); // Limit to first 10 fields
+			
+			fieldsToShow.forEach(field => {
+				const value = document[field];
+				if (value) {
+					message += `<div style="margin-bottom: 8px; font-size: 14px;"><span style="color: #6b7280; font-weight: 500;">${escapeHtml(field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</span> <span style="color: #1f2937;">${escapeHtml(String(value))}</span></div>`;
+				}
+			});
+			
+			message += `<div style="margin-top: 12px;"><a href="${docUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${doctype} →</a></div>`;
+			message += '</div>';
+			
+			addMessage(message, 'ai');
+		} catch (error) {
+			console.error('displayDocumentDetails error:', error, { document, doctype });
+			addMessage(`❌ Error displaying document details: ${error.message || 'Unknown error'}`, 'ai');
+		}
 	};
 
 	// Show typing indicator

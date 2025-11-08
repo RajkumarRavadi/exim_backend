@@ -5,13 +5,14 @@ Each doctype has its own handler for specific operations.
 
 from exim_backend.api.doctypes.base_handler import BaseDocTypeHandler
 from exim_backend.api.doctypes.customer_handler import CustomerHandler
+from exim_backend.api.doctypes.item_handler import ItemHandler
 
 # Registry of available doctype handlers
 DOCTYPE_HANDLERS = {
 	"Customer": CustomerHandler,
+	"Item": ItemHandler,
 	# Add more doctypes here as they are implemented
 	# "Supplier": SupplierHandler,
-	# "Item": ItemHandler,
 	# "Lead": LeadHandler,
 }
 

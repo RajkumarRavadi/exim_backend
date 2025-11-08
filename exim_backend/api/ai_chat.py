@@ -136,10 +136,17 @@ AVAILABLE DOCTYPES: {available_doctypes}
 
 {fields_section}
 
+IMPORTANT: The fields list above shows COMMON fields, but get_document_details returns ALL fields including:
+- All standard fields (name, creation, modified, etc.)
+- All custom fields
+- Calculated fields (like total_projected_qty, valuation_rate, etc.)
+- Related data (prices, stock, uoms, etc.)
+When user asks about ANY field of a specific document, use get_document_details - it returns complete data.
+
 ACTIONS:
 1. DIRECT ANSWER - Answer from context (no JSON)
 2. dynamic_search - Query with filters: {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"field": "value"}}, "execute_immediately": true}}
-3. get_document_details - Full details: {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
+3. get_document_details - Full details (returns ALL fields): {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
 4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
 5. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
 6. find_duplicates - Find duplicates (Customer only): {{"action": "find_duplicates", "doctype": "Customer", "execute_immediately": true}}
@@ -156,12 +163,22 @@ Q: "Customers without email" → {{"action": "dynamic_search", "doctype": "Custo
 Q: "Create supplier ABC Corp" → {{"action": "create_document", "doctype": "Supplier", "fields": {{"supplier_name": "ABC Corp"}}, "execute_immediately": false}}
 Q: "How many customers?" → {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
 Q: "What's X's phone?" → Direct answer if known, else search
+Q: "Show item description for banana" → {{"action": "get_document_details", "doctype": "Item", "name": "banana", "execute_immediately": true}}
+Q: "What are the UOMs for item Apple?" → {{"action": "get_document_details", "doctype": "Item", "name": "Apple", "execute_immediately": true}}
+Q: "What is the conversion factor for Pair in item Banana?" → {{"action": "get_document_details", "doctype": "Item", "name": "Banana", "execute_immediately": true}}
+Q: "What is the total projected qty of item banana?" → {{"action": "get_document_details", "doctype": "Item", "name": "banana", "execute_immediately": true}}
+Q: "What is the [ANY FIELD] of [ITEM NAME]?" → ALWAYS use get_document_details
 
 RULES:
 - ALWAYS specify doctype in action JSON
 - Return ONLY JSON for actions (no markdown)
 - Set execute_immediately: true for queries, false for creates
 - Use direct answers when possible (no JSON needed)
+- CRITICAL RULE: When user asks about ANY field/information of a SPECIFIC named item/customer/etc, ALWAYS use get_document_details
+- get_document_details returns ALL fields (not just the ones in the fields list above) - use it for any field question
+- For questions like "what is X of item Y" or "show me X for Y", use get_document_details
+- NEVER say "I cannot" or "field not available" - instead use get_document_details to get complete data
+- NEVER ask user to fetch details first - automatically use get_document_details
 - Think before acting - understand intent and doctype first"""
 
 
@@ -1074,8 +1091,10 @@ def dynamic_search():
 		if handler:
 			result = handler.dynamic_search(filters, limit, order_by)
 			# Rename 'results' to doctype-specific name for backward compatibility
-			if doctype == "Customer" and "results" in result:
-				result["customers"] = result.pop("results")
+			if "results" in result:
+				# Use plural form of doctype name (simple: add 's')
+				doctype_key = doctype.lower() + "s"  # customers, items, etc.
+				result[doctype_key] = result.pop("results")
 			return result
 		else:
 			return {
@@ -1186,7 +1205,7 @@ def count_documents():
 		
 		if handler:
 			# Use handler's count method, or custom method if available
-			if doctype == "Customer" and hasattr(handler, 'count_with_breakdown'):
+			if hasattr(handler, 'count_with_breakdown'):
 				return handler.count_with_breakdown()
 			else:
 				return handler.count_documents(filters)
@@ -1260,9 +1279,17 @@ def get_document_details():
 		
 		if handler:
 			result = handler.get_document_details(name)
+			frappe.logger().info(f"Handler returned result for {doctype} '{name}': status={result.get('status')}, keys={list(result.keys())}")
+			
 			# Rename 'document' to doctype-specific name for backward compatibility
-			if doctype == "Customer" and "document" in result:
-				result["customer"] = result.pop("document")
+			if "document" in result:
+				# Use lowercase doctype as key (customer, item, etc.)
+				doctype_key = doctype.lower()
+				result[doctype_key] = result.pop("document")
+				frappe.logger().info(f"Renamed 'document' to '{doctype_key}'")
+			
+			# Log the final result structure
+			frappe.logger().info(f"Final API response for {doctype} '{name}': {json.dumps({k: type(v).__name__ if not isinstance(v, (str, int, float, bool, type(None))) else v for k, v in result.items()}, indent=2)}")
 			return result
 		else:
 			# Fallback to generic retrieval
