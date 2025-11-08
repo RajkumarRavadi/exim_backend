@@ -147,9 +147,18 @@ ACTIONS:
 1. DIRECT ANSWER - Answer from context (no JSON)
 2. dynamic_search - Query with filters and sorting: {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"field": "value"}}, "order_by": "field desc", "limit": 1, "execute_immediately": true}}
 3. get_document_details - Full details (returns ALL fields): {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
-4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
+4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "filters": {{"field": "value"}}, "execute_immediately": true}}
 5. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
 6. find_duplicates - Find duplicates (Customer only): {{"action": "find_duplicates", "doctype": "Customer", "execute_immediately": true}}
+7. get_customers_by_order_count - Top customers by order count (Sales Order only): {{"action": "get_customers_by_order_count", "limit": 5, "execute_immediately": true}}
+8. get_customers_by_order_value - Biggest customers by total value (Sales Order only): {{"action": "get_customers_by_order_value", "limit": 5, "execute_immediately": true}}
+9. get_orders_by_customer_group - Orders by customer group (Sales Order only): {{"action": "get_orders_by_customer_group", "customer_group": "Group Name", "execute_immediately": true}}
+10. get_orders_by_territory - Orders by territory (Sales Order only): {{"action": "get_orders_by_territory", "territory": "Territory Name", "execute_immediately": true}}
+11. get_orders_by_item - Orders containing specific item (Sales Order only): {{"action": "get_orders_by_item", "item_code": "Item Code", "execute_immediately": true}}
+12. get_orders_with_most_items - Orders with most line items (Sales Order only): {{"action": "get_orders_with_most_items", "limit": 10, "execute_immediately": true}}
+13. get_orders_by_item_group - Orders with items from specific group (Sales Order only): {{"action": "get_orders_by_item_group", "item_group": "Item Group Name", "execute_immediately": true}}
+14. get_total_quantity_sold - Total quantity sold for item (Sales Order only): {{"action": "get_total_quantity_sold", "item_code": "Item Code", "from_date": "this week", "to_date": "today", "execute_immediately": true}}
+15. get_most_sold_items - Most sold items aggregated (Sales Order only): {{"action": "get_most_sold_items", "limit": 5, "from_date": "this week", "execute_immediately": true}}
 
 FILTER OPERATORS:
 - {{"$like": "%text%"}} - Partial match
@@ -175,6 +184,32 @@ Q: "Sales orders created today" → {{"action": "dynamic_search", "doctype": "Sa
 Q: "Sales orders created on 08-11-2025" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "08-11-2025"}}, "execute_immediately": true}}
 Q: "Sales orders with transaction date 08-11-2025" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": "08-11-2025"}}, "execute_immediately": true}}
 Q: "Sales orders created yesterday" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "yesterday"}}, "execute_immediately": true}}
+Q: "Show me all sales orders" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "modified desc", "execute_immediately": true}}
+Q: "List sales orders created this week" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": {{"$gte": "this week", "$lte": "today"}}}}, "order_by": "creation desc", "execute_immediately": true}}
+Q: "Show submitted sales orders" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"status": "Submitted"}}, "execute_immediately": true}}
+Q: "Show completed sales orders" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"status": "Completed"}}, "execute_immediately": true}}
+Q: "Show draft sales orders" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"status": "Draft"}}, "execute_immediately": true}}
+Q: "How many sales orders are there?" → {{"action": "count_documents", "doctype": "Sales Order", "execute_immediately": true}}
+Q: "List all sales orders for Company A" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"company": "Company A"}}, "execute_immediately": true}}
+Q: "Sales orders created in the last 7 days" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": {{"$gte": "7 days ago"}}}}, "order_by": "creation desc", "execute_immediately": true}}
+Q: "Show orders from John Traders" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"customer": "John Traders"}}, "execute_immediately": true}}
+Q: "How many orders has John Traders placed?" → {{"action": "count_documents", "doctype": "Sales Order", "filters": {{"customer": "John Traders"}}, "execute_immediately": true}}
+Q: "Top 5 customers by order count" → Use count_by_customer API endpoint or dynamic_search. For top N, use count_by_customer with limit parameter
+Q: "Who are my biggest customers?" → Use get_customers_by_order_value API endpoint to get customers with highest total order value
+Q: "Show orders from South Region customers" → Use get_orders_by_territory API endpoint with territory="South Region"
+Q: "Show orders from customers in Demo Customer Group" → Use get_orders_by_customer_group API endpoint with customer_group="Demo Customer Group"
+Q: "Show orders containing Laptop Model X" → {{"action": "get_orders_by_item", "item_code": "Laptop Model X", "execute_immediately": true}}
+Q: "Which orders have the most line items?" → {{"action": "get_orders_with_most_items", "limit": 10, "execute_immediately": true}}
+Q: "Show orders with Electronics items" → {{"action": "get_orders_by_item_group", "item_group": "Electronics", "execute_immediately": true}}
+Q: "Total Laptops sold this week" → {{"action": "get_total_quantity_sold", "item_code": "Laptop", "from_date": "this week", "execute_immediately": true}}
+Q: "Top 5 most ordered products" → {{"action": "get_most_sold_items", "limit": 5, "execute_immediately": true}}
+Q: "Orders placed today" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": "today"}}, "execute_immediately": true}}
+Q: "Orders created today" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "today"}}, "execute_immediately": true}}
+Q: "Orders this week" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": {{"$gte": "this week", "$lte": "today"}}}}, "execute_immediately": true}}
+Q: "Orders this month" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": {{"$gte": "1 month ago"}}}}, "execute_immediately": true}}
+Q: "Orders between Aug 1 and Aug 31" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": {{"$gte": "01-08-2025", "$lte": "31-08-2025"}}}}, "execute_immediately": true}}
+Q: "Deliveries scheduled this week" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"delivery_date": {{"$gte": "this week", "$lte": "today"}}}}, "execute_immediately": true}}
+Q: "Orders expected for delivery today" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"delivery_date": "today"}}, "execute_immediately": true}}
 Q: "Which customer has more sales orders?" → Use count_documents with filters grouped by customer, or use dynamic_search to get all sales orders and analyze
 Q: "Which sales order contains more items?" → Use get_document_details for each sales order to count items, or use dynamic_search with order_by based on item count if available
 
@@ -191,8 +226,10 @@ RULES:
 - IMPORTANT: When providing text responses, use plain text or markdown format (use * for lists, ** for bold, ` for code). NEVER use HTML tags like <p>, <ul>, <li> in your responses - the system will format it automatically
 - SORTING: Use "order_by" in dynamic_search to sort results. Examples: "grand_total desc" (highest first), "grand_total asc" (lowest first), "modified desc" (newest first)
 - FINDING MAX/MIN: To find highest/lowest value, use dynamic_search with order_by and limit: 1. Example: {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total desc", "limit": 1, "execute_immediately": true}}
-- DATE FILTERS: For date queries, use field names: "creation" (for created date), "transaction_date" (for transaction date), "delivery_date" (for delivery date). Date formats supported: "today", "yesterday", "DD-MM-YYYY" (e.g., "08-11-2025"), "YYYY-MM-DD" (e.g., "2025-11-08"). The system will automatically convert formats.
+- DATE FILTERS: For date queries, use field names: "creation" (for created date), "transaction_date" (for transaction/order date), "delivery_date" (for delivery date). Date formats supported: "today", "yesterday", "DD-MM-YYYY" (e.g., "08-11-2025"), "YYYY-MM-DD" (e.g., "2025-11-08"), "this week", "7 days ago", "1 month ago", "this month". The system will automatically convert formats.
 - FIELD MAPPING: "created" or "created_date" maps to "creation", "date" or "order_date" maps to "transaction_date"
+- DATE RANGE QUERIES: Use operators like {{"$gte": "start_date"}} for "greater than or equal" and {{"$lte": "end_date"}} for "less than or equal". For "between two dates", use both: {{"transaction_date": {{"$gte": "start", "$lte": "end"}}}}. For "this week", use both bounds: {{"creation": {{"$gte": "this week", "$lte": "today"}}}} to get records from start of week to today. For "this month", use {{"$gte": "1 month ago"}} or {{"$gte": "this month"}}.
+- DELIVERY DATE QUERIES: For delivery-related queries, use "delivery_date" field. "Deliveries scheduled this week" → {{"delivery_date": {{"$gte": "this week", "$lte": "today"}}}}, "Orders expected for delivery today" → {{"delivery_date": "today"}}.
 - CONTEXT AWARENESS: When user asks follow-up questions like "what is it", "give its details", "show me that", etc., refer to the previous conversation. Extract document names from the previous assistant message. Look for patterns like "Document name: X" or document IDs in the format like "SAL-ORD-2025-00006", "CUST-00001", etc. If a search or count query returned 1 document, use that document's name automatically. If multiple documents were mentioned, use the first one or ask for clarification only if truly ambiguous.
 - When user says "it", "that", "this", or similar pronouns, they refer to the most recently mentioned document(s) in the conversation. Look for document names/IDs in the previous assistant message (they appear as bold text or in format like SAL-ORD-XXXX, CUST-XXXX, etc.). Use get_document_details with the document name from context.
 - EXTRACTING DOCUMENT NAMES: When you see search results or count results in the conversation, extract the document name/ID. Common patterns: Sales Orders (SAL-ORD-XXXX), Customers (CUST-XXXX or customer names), Items (item codes or names). The document name is usually the first bold text or ID shown in the result.
@@ -1102,6 +1139,25 @@ def dynamic_search():
 		handler = get_handler(doctype)
 		
 		if handler:
+			# Check for special aggregation queries for Sales Order
+			if doctype == "Sales Order":
+				# Handle customer group filter (requires join with Customer)
+				if "customer_group" in filters:
+					customer_group = filters.pop("customer_group")
+					if hasattr(handler, 'get_orders_by_customer_group'):
+						result = handler.get_orders_by_customer_group(customer_group)
+						if "results" in result:
+							result["sales_orders"] = result.pop("results")
+						return result
+				# Handle territory filter (requires join with Customer)
+				if "territory" in filters:
+					territory = filters.pop("territory")
+					if hasattr(handler, 'get_orders_by_territory'):
+						result = handler.get_orders_by_territory(territory)
+						if "results" in result:
+							result["sales_orders"] = result.pop("results")
+						return result
+			
 			result = handler.dynamic_search(filters, limit, order_by)
 			# Rename 'results' to doctype-specific name for backward compatibility
 			if "results" in result:
@@ -1257,6 +1313,343 @@ def count_customers():
 	"""
 	frappe.form_dict["doctype"] = "Customer"
 	return count_documents()
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_customers_by_order_count():
+	"""
+	Get customers with most orders, ordered by order count.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_customers_by_order_count
+	Accepts:
+		- limit: Number of results (default: 10)
+		- order_by: Order by clause (default: order_count desc)
+	Returns: Customers with order counts
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_customers_by_order_count'):
+			limit = int(frappe.form_dict.get("limit", 10))
+			order_by = frappe.form_dict.get("order_by", "order_count desc")
+			return handler.get_customers_by_order_count(limit, order_by)
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get customers by order count error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get customers by order count: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_customers_by_order_value():
+	"""
+	Get customers with highest order value, ordered by total value.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_customers_by_order_value
+	Accepts:
+		- limit: Number of results (default: 10)
+		- order_by: Order by clause (default: total_value desc)
+	Returns: Customers with order values
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_customers_by_order_value'):
+			limit = int(frappe.form_dict.get("limit", 10))
+			order_by = frappe.form_dict.get("order_by", "total_value desc")
+			return handler.get_customers_by_order_value(limit, order_by)
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get customers by order value error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get customers by order value: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_orders_by_customer_group():
+	"""
+	Get sales orders filtered by customer group.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_orders_by_customer_group
+	Accepts:
+		- customer_group: Customer group name (required)
+	Returns: Sales orders for customers in the specified group
+	"""
+	try:
+		customer_group = frappe.form_dict.get("customer_group")
+		if not customer_group:
+			return {
+				"status": "error",
+				"message": "Customer group is required"
+			}
+		
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_orders_by_customer_group'):
+			result = handler.get_orders_by_customer_group(customer_group)
+			# Rename 'results' to 'sales_orders' for consistency
+			if "results" in result:
+				result["sales_orders"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get orders by customer group error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get orders by customer group: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_orders_by_territory():
+	"""
+	Get sales orders filtered by territory.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_orders_by_territory
+	Accepts:
+		- territory: Territory name (required)
+	Returns: Sales orders for customers in the specified territory
+	"""
+	try:
+		territory = frappe.form_dict.get("territory")
+		if not territory:
+			return {
+				"status": "error",
+				"message": "Territory is required"
+			}
+		
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_orders_by_territory'):
+			result = handler.get_orders_by_territory(territory)
+			# Rename 'results' to 'sales_orders' for consistency
+			if "results" in result:
+				result["sales_orders"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get orders by territory error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get orders by territory: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_orders_by_item():
+	"""
+	Get sales orders containing a specific item.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_orders_by_item
+	Accepts:
+		- item_code: Item code (required)
+	Returns: Sales orders containing the specified item
+	"""
+	try:
+		item_code = frappe.form_dict.get("item_code")
+		if not item_code:
+			return {
+				"status": "error",
+				"message": "Item code is required"
+			}
+		
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_orders_by_item'):
+			result = handler.get_orders_by_item(item_code)
+			# Rename 'results' to 'sales_orders' for consistency
+			if "results" in result:
+				result["sales_orders"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get orders by item error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get orders by item: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_orders_with_most_items():
+	"""
+	Get sales orders with most line items.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_orders_with_most_items
+	Accepts:
+		- limit: Number of results (default: 10)
+		- order_by: Order by clause (default: item_count desc)
+	Returns: Sales orders with item counts
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_orders_with_most_items'):
+			limit = int(frappe.form_dict.get("limit", 10))
+			order_by = frappe.form_dict.get("order_by", "item_count desc")
+			result = handler.get_orders_with_most_items(limit, order_by)
+			# Rename 'results' to 'sales_orders' for consistency
+			if "results" in result:
+				result["sales_orders"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get orders with most items error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get orders with most items: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_orders_by_item_group():
+	"""
+	Get sales orders containing items from a specific item group.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_orders_by_item_group
+	Accepts:
+		- item_group: Item group name (required)
+	Returns: Sales orders containing items from the specified group
+	"""
+	try:
+		item_group = frappe.form_dict.get("item_group")
+		if not item_group:
+			return {
+				"status": "error",
+				"message": "Item group is required"
+			}
+		
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_orders_by_item_group'):
+			result = handler.get_orders_by_item_group(item_group)
+			# Rename 'results' to 'sales_orders' for consistency
+			if "results" in result:
+				result["sales_orders"] = result.pop("results")
+			return result
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get orders by item group error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get orders by item group: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_total_quantity_sold():
+	"""
+	Get total quantity sold for a specific item within a date range.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_total_quantity_sold
+	Accepts:
+		- item_code: Item code (required)
+		- from_date: Start date (optional)
+		- to_date: End date (optional)
+	Returns: Total quantity and amount sold
+	"""
+	try:
+		item_code = frappe.form_dict.get("item_code")
+		if not item_code:
+			return {
+				"status": "error",
+				"message": "Item code is required"
+			}
+		
+		from_date = frappe.form_dict.get("from_date")
+		to_date = frappe.form_dict.get("to_date")
+		
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_total_quantity_sold'):
+			return handler.get_total_quantity_sold(item_code, from_date, to_date)
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get total quantity sold error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get total quantity sold: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_most_sold_items():
+	"""
+	Get most sold items aggregated by item_code.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_most_sold_items
+	Accepts:
+		- limit: Number of results (default: 10)
+		- order_by: Order by clause (default: total_qty desc)
+		- from_date: Start date (optional)
+		- to_date: End date (optional)
+	Returns: Most sold items with quantities and amounts
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Order")
+		
+		if handler and hasattr(handler, 'get_most_sold_items'):
+			limit = int(frappe.form_dict.get("limit", 10))
+			order_by = frappe.form_dict.get("order_by", "total_qty desc")
+			from_date = frappe.form_dict.get("from_date")
+			to_date = frappe.form_dict.get("to_date")
+			return handler.get_most_sold_items(limit, order_by, from_date, to_date)
+		else:
+			return {
+				"status": "error",
+				"message": "Handler or method not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get most sold items error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get most sold items: {str(e)}"
+		}
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

@@ -821,6 +821,24 @@
 			handleFindDuplicates(action);
 		} else if (action.action === 'count_documents' || action.action === 'count_customers') {
 			handleCountDocuments(action);
+		} else if (action.action === 'get_customers_by_order_count') {
+			handleGetCustomersByOrderCount(action);
+		} else if (action.action === 'get_customers_by_order_value') {
+			handleGetCustomersByOrderValue(action);
+		} else if (action.action === 'get_orders_by_customer_group') {
+			handleGetOrdersByCustomerGroup(action);
+		} else if (action.action === 'get_orders_by_territory') {
+			handleGetOrdersByTerritory(action);
+		} else if (action.action === 'get_orders_by_item') {
+			handleGetOrdersByItem(action);
+		} else if (action.action === 'get_orders_with_most_items') {
+			handleGetOrdersWithMostItems(action);
+		} else if (action.action === 'get_orders_by_item_group') {
+			handleGetOrdersByItemGroup(action);
+		} else if (action.action === 'get_total_quantity_sold') {
+			handleGetTotalQuantitySold(action);
+		} else if (action.action === 'get_most_sold_items') {
+			handleGetMostSoldItems(action);
 		} else if (action.action === 'search_customer') {
 			// Legacy support
 			handleSearchCustomer(action);
@@ -1178,6 +1196,493 @@
 		}
 
 		addMessage(message, 'ai');
+	};
+
+	// Handle get customers by order count
+	const handleGetCustomersByOrderCount = async (action) => {
+		try {
+			showTypingIndicator();
+			const limit = action?.limit || 10;
+			
+			const formData = new FormData();
+			formData.append('limit', limit);
+			if (action?.order_by) {
+				formData.append('order_by', action.order_by);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_customers_by_order_count', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success' && result.results) {
+				let message = `<p><strong>Top ${result.count} customers by order count:</strong></p><div style="margin-top: 12px;">`;
+				result.results.forEach((item, index) => {
+					message += `<div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
+					message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(item.customer_name || item.customer)}</div>`;
+					const details = [];
+					details.push(`<span style="color: #3b82f6; font-weight: 600;">📦 ${item.order_count} orders</span>`);
+					if (item.total_value) {
+						details.push(`<span style="color: #4b5563;">💰 ${escapeHtml(item.currency || '')} ${escapeHtml(item.total_value)}</span>`);
+					}
+					if (item.last_order_date) {
+						details.push(`<span style="color: #4b5563;">📅 Last order: ${escapeHtml(item.last_order_date)}</span>`);
+					}
+					message += `<div style="font-size: 13px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
+					message += `</div>`;
+				});
+				message += '</div>';
+				addMessage(message, 'ai');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get customers by order count'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching customers by order count. Please try again.', 'ai');
+			console.error('Get customers by order count error:', error);
+		}
+	};
+
+	// Handle get customers by order value
+	const handleGetCustomersByOrderValue = async (action) => {
+		try {
+			showTypingIndicator();
+			const limit = action?.limit || 10;
+			
+			const formData = new FormData();
+			formData.append('limit', limit);
+			if (action?.order_by) {
+				formData.append('order_by', action.order_by);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_customers_by_order_value', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success' && result.results) {
+				let message = `<p><strong>Top ${result.count} customers by order value:</strong></p><div style="margin-top: 12px;">`;
+				result.results.forEach((item, index) => {
+					message += `<div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
+					message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(item.customer_name || item.customer)}</div>`;
+					const details = [];
+					details.push(`<span style="color: #3b82f6; font-weight: 600; font-size: 15px;">💰 ${escapeHtml(item.currency || '')} ${escapeHtml(item.total_value)}</span>`);
+					if (item.order_count) {
+						details.push(`<span style="color: #4b5563;">📦 ${item.order_count} orders</span>`);
+					}
+					if (item.avg_order_value) {
+						details.push(`<span style="color: #4b5563;">📊 Avg: ${escapeHtml(item.currency || '')} ${escapeHtml(item.avg_order_value)}</span>`);
+					}
+					if (item.last_order_date) {
+						details.push(`<span style="color: #4b5563;">📅 Last order: ${escapeHtml(item.last_order_date)}</span>`);
+					}
+					message += `<div style="font-size: 13px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
+					message += `</div>`;
+				});
+				message += '</div>';
+				addMessage(message, 'ai');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get customers by order value'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching customers by order value. Please try again.', 'ai');
+			console.error('Get customers by order value error:', error);
+		}
+	};
+
+	// Handle get orders by customer group
+	const handleGetOrdersByCustomerGroup = async (action) => {
+		try {
+			showTypingIndicator();
+			const customer_group = action?.customer_group;
+			
+			if (!customer_group) {
+				hideTypingIndicator();
+				addMessage('❌ Customer group is required', 'ai');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('customer_group', customer_group);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_orders_by_customer_group', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success') {
+				// Use the same display function as dynamic search
+				displayDynamicSearchResults(result, 'Sales Order');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get orders by customer group'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching orders by customer group. Please try again.', 'ai');
+			console.error('Get orders by customer group error:', error);
+		}
+	};
+
+	// Handle get orders by territory
+	const handleGetOrdersByTerritory = async (action) => {
+		try {
+			showTypingIndicator();
+			const territory = action?.territory;
+			
+			if (!territory) {
+				hideTypingIndicator();
+				addMessage('❌ Territory is required', 'ai');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('territory', territory);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_orders_by_territory', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success') {
+				// Use the same display function as dynamic search
+				displayDynamicSearchResults(result, 'Sales Order');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get orders by territory'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching orders by territory. Please try again.', 'ai');
+			console.error('Get orders by territory error:', error);
+		}
+	};
+
+	// Handle get orders by item
+	const handleGetOrdersByItem = async (action) => {
+		try {
+			showTypingIndicator();
+			const item_code = action?.item_code;
+			
+			if (!item_code) {
+				hideTypingIndicator();
+				addMessage('❌ Item code is required', 'ai');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('item_code', item_code);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_orders_by_item', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success') {
+				// Use the same display function as dynamic search
+				displayDynamicSearchResults(result, 'Sales Order');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get orders by item'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching orders by item. Please try again.', 'ai');
+			console.error('Get orders by item error:', error);
+		}
+	};
+
+	// Handle get orders with most items
+	const handleGetOrdersWithMostItems = async (action) => {
+		try {
+			showTypingIndicator();
+			const limit = action?.limit || 10;
+			
+			const formData = new FormData();
+			formData.append('limit', limit);
+			if (action?.order_by) {
+				formData.append('order_by', action.order_by);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_orders_with_most_items', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success' && result.sales_orders) {
+				let message = `<p><strong>Top ${result.count} sales orders with most items:</strong></p><div style="margin-top: 12px;">`;
+				result.sales_orders.forEach((item, index) => {
+					message += `<div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
+					message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(item.name)}</div>`;
+					const details = [];
+					details.push(`<span style="color: #3b82f6; font-weight: 600;">📦 ${item.item_count} items</span>`);
+					if (item.customer_name) {
+						details.push(`<span style="color: #4b5563;">Customer: ${escapeHtml(item.customer_name)}</span>`);
+					}
+					if (item.grand_total) {
+						details.push(`<span style="color: #4b5563;">💰 ${escapeHtml(item.currency || '')} ${escapeHtml(item.grand_total)}</span>`);
+					}
+					if (item.transaction_date) {
+						details.push(`<span style="color: #4b5563;">📅 ${escapeHtml(item.transaction_date)}</span>`);
+					}
+					message += `<div style="font-size: 13px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
+					message += `<a href="${window.location.origin}/app/sales-order/${encodeURIComponent(item.name)}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Sales Order →</a>`;
+					message += `</div>`;
+				});
+				message += '</div>';
+				addMessage(message, 'ai');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get orders with most items'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching orders with most items. Please try again.', 'ai');
+			console.error('Get orders with most items error:', error);
+		}
+	};
+
+	// Handle get orders by item group
+	const handleGetOrdersByItemGroup = async (action) => {
+		try {
+			showTypingIndicator();
+			const item_group = action?.item_group;
+			
+			if (!item_group) {
+				hideTypingIndicator();
+				addMessage('❌ Item group is required', 'ai');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('item_group', item_group);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_orders_by_item_group', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success') {
+				// Use the same display function as dynamic search
+				displayDynamicSearchResults(result, 'Sales Order');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get orders by item group'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching orders by item group. Please try again.', 'ai');
+			console.error('Get orders by item group error:', error);
+		}
+	};
+
+	// Handle get total quantity sold
+	const handleGetTotalQuantitySold = async (action) => {
+		try {
+			showTypingIndicator();
+			const item_code = action?.item_code;
+			
+			if (!item_code) {
+				hideTypingIndicator();
+				addMessage('❌ Item code is required', 'ai');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('item_code', item_code);
+			if (action?.from_date) {
+				formData.append('from_date', action.from_date);
+			}
+			if (action?.to_date) {
+				formData.append('to_date', action.to_date);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_total_quantity_sold', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success') {
+				let message = `<p><strong>Total quantity sold for ${escapeHtml(result.item_name || result.item_code)}:</strong></p>`;
+				message += `<div style="margin-top: 12px; padding: 12px; background-color: #f3f4f6; border-radius: 8px;">`;
+				message += `<div style="font-size: 24px; font-weight: 700; color: #3b82f6; margin-bottom: 8px;">${escapeHtml(result.total_qty || 0)} units</div>`;
+				const details = [];
+				if (result.total_amount) {
+					details.push(`<span style="color: #4b5563;">💰 Total Value: ${escapeHtml(result.total_amount)}</span>`);
+				}
+				if (result.order_count) {
+					details.push(`<span style="color: #4b5563;">📦 Orders: ${escapeHtml(result.order_count)}</span>`);
+				}
+				if (result.from_date || result.to_date) {
+					const dateRange = [];
+					if (result.from_date) dateRange.push(`From: ${escapeHtml(result.from_date)}`);
+					if (result.to_date) dateRange.push(`To: ${escapeHtml(result.to_date)}`);
+					if (dateRange.length > 0) {
+						details.push(`<span style="color: #4b5563;">📅 ${dateRange.join(' - ')}</span>`);
+					}
+				}
+				if (details.length > 0) {
+					message += `<div style="font-size: 13px; line-height: 1.5; margin-top: 8px;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
+				}
+				message += `</div>`;
+				addMessage(message, 'ai');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get total quantity sold'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching total quantity sold. Please try again.', 'ai');
+			console.error('Get total quantity sold error:', error);
+		}
+	};
+
+	// Handle get most sold items
+	const handleGetMostSoldItems = async (action) => {
+		try {
+			showTypingIndicator();
+			const limit = action?.limit || 10;
+			
+			const formData = new FormData();
+			formData.append('limit', limit);
+			if (action?.order_by) {
+				formData.append('order_by', action.order_by);
+			}
+			if (action?.from_date) {
+				formData.append('from_date', action.from_date);
+			}
+			if (action?.to_date) {
+				formData.append('to_date', action.to_date);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_most_sold_items', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator();
+
+			if (result.status === 'success' && result.results) {
+				let message = `<p><strong>Top ${result.count} most sold items:</strong></p><div style="margin-top: 12px;">`;
+				result.results.forEach((item, index) => {
+					message += `<div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
+					message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(item.item_name || item.item_code)}</div>`;
+					const details = [];
+					details.push(`<span style="color: #3b82f6; font-weight: 600;">📦 ${escapeHtml(item.total_qty || 0)} units sold</span>`);
+					if (item.total_amount) {
+						details.push(`<span style="color: #4b5563;">💰 ${escapeHtml(item.total_amount)}</span>`);
+					}
+					if (item.order_count) {
+						details.push(`<span style="color: #4b5563;">📋 ${escapeHtml(item.order_count)} orders</span>`);
+					}
+					if (item.avg_rate) {
+						details.push(`<span style="color: #4b5563;">💵 Avg Rate: ${escapeHtml(item.avg_rate)}</span>`);
+					}
+					message += `<div style="font-size: 13px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
+					message += `</div>`;
+				});
+				message += '</div>';
+				addMessage(message, 'ai');
+			} else {
+				addMessage(`❌ ${result.message || 'Failed to get most sold items'}`, 'ai');
+			}
+		} catch (error) {
+			hideTypingIndicator();
+			addMessage('❌ Error fetching most sold items. Please try again.', 'ai');
+			console.error('Get most sold items error:', error);
+		}
 	};
 
 	// Handle search customer

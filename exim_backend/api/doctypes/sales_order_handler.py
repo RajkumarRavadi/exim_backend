@@ -279,4 +279,350 @@ class SalesOrderHandler(BaseDocTypeHandler):
 				"status": "error",
 				"message": f"Failed to get items count: {str(e)}"
 			}
+	
+	def get_customers_by_order_count(self, limit=10, order_by="order_count desc"):
+		"""Get customers with most orders, ordered by order count."""
+		try:
+			query = f"""
+				SELECT 
+					so.customer,
+					so.customer_name,
+					COUNT(*) as order_count,
+					SUM(so.grand_total) as total_value,
+					so.currency,
+					MAX(so.transaction_date) as last_order_date
+				FROM `tabSales Order` so
+				WHERE so.customer IS NOT NULL
+				GROUP BY so.customer, so.customer_name, so.currency
+				ORDER BY {order_by}
+				LIMIT %(limit)s
+			"""
+			results = frappe.db.sql(query, {"limit": limit}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get customers by order count error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get customers by order count: {str(e)}"
+			}
+	
+	def get_customers_by_order_value(self, limit=10, order_by="total_value desc"):
+		"""Get customers with highest order value, ordered by total value."""
+		try:
+			query = f"""
+				SELECT 
+					so.customer,
+					so.customer_name,
+					COUNT(*) as order_count,
+					SUM(so.grand_total) as total_value,
+					AVG(so.grand_total) as avg_order_value,
+					so.currency,
+					MAX(so.transaction_date) as last_order_date
+				FROM `tabSales Order` so
+				WHERE so.customer IS NOT NULL
+				GROUP BY so.customer, so.customer_name, so.currency
+				ORDER BY {order_by}
+				LIMIT %(limit)s
+			"""
+			results = frappe.db.sql(query, {"limit": limit}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get customers by order value error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get customers by order value: {str(e)}"
+			}
+	
+	def get_orders_by_customer_group(self, customer_group):
+		"""Get sales orders filtered by customer group."""
+		try:
+			# Join with Customer to filter by customer_group
+			query = """
+				SELECT 
+					so.name,
+					so.customer,
+					so.customer_name,
+					so.transaction_date,
+					so.status,
+					so.grand_total,
+					so.currency,
+					so.company,
+					c.customer_group,
+					c.territory
+				FROM `tabSales Order` so
+				INNER JOIN `tabCustomer` c ON c.name = so.customer
+				WHERE c.customer_group = %(customer_group)s
+				ORDER BY so.modified DESC
+				LIMIT 100
+			"""
+			results = frappe.db.sql(query, {"customer_group": customer_group}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get orders by customer group error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get orders by customer group: {str(e)}"
+			}
+	
+	def get_orders_by_territory(self, territory):
+		"""Get sales orders filtered by territory."""
+		try:
+			# Join with Customer to filter by territory
+			query = """
+				SELECT 
+					so.name,
+					so.customer,
+					so.customer_name,
+					so.transaction_date,
+					so.status,
+					so.grand_total,
+					so.currency,
+					so.company,
+					c.customer_group,
+					c.territory
+				FROM `tabSales Order` so
+				INNER JOIN `tabCustomer` c ON c.name = so.customer
+				WHERE c.territory = %(territory)s
+				ORDER BY so.modified DESC
+				LIMIT 100
+			"""
+			results = frappe.db.sql(query, {"territory": territory}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get orders by territory error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get orders by territory: {str(e)}"
+			}
+	
+	def get_orders_by_item(self, item_code):
+		"""Get sales orders containing a specific item."""
+		try:
+			query = """
+				SELECT DISTINCT
+					so.name,
+					so.customer,
+					so.customer_name,
+					so.transaction_date,
+					so.status,
+					so.grand_total,
+					so.currency,
+					so.company,
+					soi.item_code,
+					soi.item_name,
+					soi.qty,
+					soi.rate,
+					soi.amount
+				FROM `tabSales Order` so
+				INNER JOIN `tabSales Order Item` soi ON soi.parent = so.name
+				WHERE soi.item_code = %(item_code)s
+				ORDER BY so.modified DESC
+				LIMIT 100
+			"""
+			results = frappe.db.sql(query, {"item_code": item_code}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get orders by item error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get orders by item: {str(e)}"
+			}
+	
+	def get_orders_with_most_items(self, limit=10, order_by="item_count desc"):
+		"""Get sales orders with most line items, ordered by item count."""
+		try:
+			query = f"""
+				SELECT 
+					so.name,
+					so.customer,
+					so.customer_name,
+					so.transaction_date,
+					so.status,
+					so.grand_total,
+					so.currency,
+					so.company,
+					COUNT(soi.name) as item_count
+				FROM `tabSales Order` so
+				LEFT JOIN `tabSales Order Item` soi ON soi.parent = so.name
+				GROUP BY so.name, so.customer, so.customer_name, so.transaction_date, so.status, so.grand_total, so.currency, so.company
+				ORDER BY {order_by}
+				LIMIT %(limit)s
+			"""
+			results = frappe.db.sql(query, {"limit": limit}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get orders with most items error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get orders with most items: {str(e)}"
+			}
+	
+	def get_orders_by_item_group(self, item_group):
+		"""Get sales orders containing items from a specific item group."""
+		try:
+			# Join with Sales Order Item and Item to filter by item_group
+			query = """
+				SELECT DISTINCT
+					so.name,
+					so.customer,
+					so.customer_name,
+					so.transaction_date,
+					so.status,
+					so.grand_total,
+					so.currency,
+					so.company,
+					soi.item_code,
+					soi.item_name,
+					soi.qty,
+					i.item_group
+				FROM `tabSales Order` so
+				INNER JOIN `tabSales Order Item` soi ON soi.parent = so.name
+				INNER JOIN `tabItem` i ON i.name = soi.item_code
+				WHERE i.item_group = %(item_group)s
+				ORDER BY so.modified DESC
+				LIMIT 100
+			"""
+			results = frappe.db.sql(query, {"item_group": item_group}, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get orders by item group error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get orders by item group: {str(e)}"
+			}
+	
+	def get_total_quantity_sold(self, item_code, from_date=None, to_date=None):
+		"""Get total quantity sold for a specific item within a date range."""
+		try:
+			conditions = ["soi.item_code = %(item_code)s"]
+			params = {"item_code": item_code}
+			
+			# Normalize date values if provided
+			if from_date:
+				normalized_from_date = self.normalize_date_value(from_date, "transaction_date")
+				conditions.append("so.transaction_date >= %(from_date)s")
+				params["from_date"] = normalized_from_date
+			if to_date:
+				normalized_to_date = self.normalize_date_value(to_date, "transaction_date")
+				conditions.append("so.transaction_date <= %(to_date)s")
+				params["to_date"] = normalized_to_date
+			
+			where_clause = " AND ".join(conditions)
+			
+			query = f"""
+				SELECT 
+					soi.item_code,
+					soi.item_name,
+					SUM(soi.qty) as total_qty,
+					SUM(soi.amount) as total_amount,
+					COUNT(DISTINCT so.name) as order_count
+				FROM `tabSales Order Item` soi
+				INNER JOIN `tabSales Order` so ON so.name = soi.parent
+				WHERE {where_clause}
+				GROUP BY soi.item_code, soi.item_name
+			"""
+			results = frappe.db.sql(query, params, as_dict=True)
+			
+			if results and len(results) > 0:
+				return {
+					"status": "success",
+					"item_code": item_code,
+					"item_name": results[0].get("item_name"),
+					"total_qty": results[0].get("total_qty", 0),
+					"total_amount": results[0].get("total_amount", 0),
+					"order_count": results[0].get("order_count", 0),
+					"from_date": from_date,
+					"to_date": to_date
+				}
+			else:
+				return {
+					"status": "success",
+					"item_code": item_code,
+					"total_qty": 0,
+					"total_amount": 0,
+					"order_count": 0,
+					"from_date": from_date,
+					"to_date": to_date
+				}
+		except Exception as e:
+			frappe.logger().error(f"Get total quantity sold error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get total quantity sold: {str(e)}"
+			}
+	
+	def get_most_sold_items(self, limit=10, order_by="total_qty desc", from_date=None, to_date=None):
+		"""Get most sold items aggregated by item_code, ordered by total quantity."""
+		try:
+			conditions = []
+			params = {}
+			
+			# Normalize date values if provided
+			if from_date:
+				normalized_from_date = self.normalize_date_value(from_date, "transaction_date")
+				conditions.append("so.transaction_date >= %(from_date)s")
+				params["from_date"] = normalized_from_date
+			if to_date:
+				normalized_to_date = self.normalize_date_value(to_date, "transaction_date")
+				conditions.append("so.transaction_date <= %(to_date)s")
+				params["to_date"] = normalized_to_date
+			
+			where_clause = " AND ".join(conditions) if conditions else "1=1"
+			params["limit"] = limit
+			
+			query = f"""
+				SELECT 
+					soi.item_code,
+					soi.item_name,
+					SUM(soi.qty) as total_qty,
+					SUM(soi.amount) as total_amount,
+					COUNT(DISTINCT so.name) as order_count,
+					AVG(soi.rate) as avg_rate
+				FROM `tabSales Order Item` soi
+				INNER JOIN `tabSales Order` so ON so.name = soi.parent
+				WHERE {where_clause}
+				GROUP BY soi.item_code, soi.item_name
+				ORDER BY {order_by}
+				LIMIT %(limit)s
+			"""
+			results = frappe.db.sql(query, params, as_dict=True)
+			return {
+				"status": "success",
+				"count": len(results),
+				"results": results
+			}
+		except Exception as e:
+			frappe.logger().error(f"Get most sold items error: {str(e)}")
+			return {
+				"status": "error",
+				"message": f"Failed to get most sold items: {str(e)}"
+			}
 
