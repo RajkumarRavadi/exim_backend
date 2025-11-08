@@ -145,7 +145,7 @@ When user asks about ANY field of a specific document, use get_document_details 
 
 ACTIONS:
 1. DIRECT ANSWER - Answer from context (no JSON)
-2. dynamic_search - Query with filters: {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"field": "value"}}, "execute_immediately": true}}
+2. dynamic_search - Query with filters and sorting: {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"field": "value"}}, "order_by": "field desc", "limit": 1, "execute_immediately": true}}
 3. get_document_details - Full details (returns ALL fields): {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
 4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
 5. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
@@ -168,6 +168,15 @@ Q: "What are the UOMs for item Apple?" → {{"action": "get_document_details", "
 Q: "What is the conversion factor for Pair in item Banana?" → {{"action": "get_document_details", "doctype": "Item", "name": "Banana", "execute_immediately": true}}
 Q: "What is the total projected qty of item banana?" → {{"action": "get_document_details", "doctype": "Item", "name": "banana", "execute_immediately": true}}
 Q: "What is the [ANY FIELD] of [ITEM NAME]?" → ALWAYS use get_document_details
+Q: "Sales Order with highest value" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total desc", "limit": 1, "execute_immediately": true}}
+Q: "Sales Order with lowest value" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total asc", "limit": 1, "execute_immediately": true}}
+Q: "Highest value sales order" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total desc", "limit": 1, "execute_immediately": true}}
+Q: "Sales orders created today" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "today"}}, "execute_immediately": true}}
+Q: "Sales orders created on 08-11-2025" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "08-11-2025"}}, "execute_immediately": true}}
+Q: "Sales orders with transaction date 08-11-2025" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"transaction_date": "08-11-2025"}}, "execute_immediately": true}}
+Q: "Sales orders created yesterday" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"creation": "yesterday"}}, "execute_immediately": true}}
+Q: "Which customer has more sales orders?" → Use count_documents with filters grouped by customer, or use dynamic_search to get all sales orders and analyze
+Q: "Which sales order contains more items?" → Use get_document_details for each sales order to count items, or use dynamic_search with order_by based on item count if available
 
 RULES:
 - ALWAYS specify doctype in action JSON
@@ -179,6 +188,14 @@ RULES:
 - For questions like "what is X of item Y" or "show me X for Y", use get_document_details
 - NEVER say "I cannot" or "field not available" - instead use get_document_details to get complete data
 - NEVER ask user to fetch details first - automatically use get_document_details
+- IMPORTANT: When providing text responses, use plain text or markdown format (use * for lists, ** for bold, ` for code). NEVER use HTML tags like <p>, <ul>, <li> in your responses - the system will format it automatically
+- SORTING: Use "order_by" in dynamic_search to sort results. Examples: "grand_total desc" (highest first), "grand_total asc" (lowest first), "modified desc" (newest first)
+- FINDING MAX/MIN: To find highest/lowest value, use dynamic_search with order_by and limit: 1. Example: {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total desc", "limit": 1, "execute_immediately": true}}
+- DATE FILTERS: For date queries, use field names: "creation" (for created date), "transaction_date" (for transaction date), "delivery_date" (for delivery date). Date formats supported: "today", "yesterday", "DD-MM-YYYY" (e.g., "08-11-2025"), "YYYY-MM-DD" (e.g., "2025-11-08"). The system will automatically convert formats.
+- FIELD MAPPING: "created" or "created_date" maps to "creation", "date" or "order_date" maps to "transaction_date"
+- CONTEXT AWARENESS: When user asks follow-up questions like "what is it", "give its details", "show me that", etc., refer to the previous conversation. Extract document names from the previous assistant message. Look for patterns like "Document name: X" or document IDs in the format like "SAL-ORD-2025-00006", "CUST-00001", etc. If a search or count query returned 1 document, use that document's name automatically. If multiple documents were mentioned, use the first one or ask for clarification only if truly ambiguous.
+- When user says "it", "that", "this", or similar pronouns, they refer to the most recently mentioned document(s) in the conversation. Look for document names/IDs in the previous assistant message (they appear as bold text or in format like SAL-ORD-XXXX, CUST-XXXX, etc.). Use get_document_details with the document name from context.
+- EXTRACTING DOCUMENT NAMES: When you see search results or count results in the conversation, extract the document name/ID. Common patterns: Sales Orders (SAL-ORD-XXXX), Customers (CUST-XXXX or customer names), Items (item codes or names). The document name is usually the first bold text or ID shown in the result.
 - Think before acting - understand intent and doctype first"""
 
 
@@ -347,7 +364,7 @@ def process_chat():
 			"Supplier": ["supplier", "suppliers", "vendor", "vendors"],
 			"Item": ["item", "items", "product", "products"],
 			"Lead": ["lead", "leads", "prospect", "prospects"],
-			"Sales Order": ["sales order", "sales orders", "so"],
+			"Sales Order": ["sales order", "sales orders", "so", "salesorder"],
 			"Purchase Order": ["purchase order", "purchase orders", "po"],
 		}
 		
@@ -1072,17 +1089,13 @@ def dynamic_search():
 				"message": "DocType is required"
 			}
 		
-		if not filters_json:
-			return {
-				"status": "error",
-				"message": "Filters are required"
-			}
-		
-		# Parse filters
-		if isinstance(filters_json, str):
-			filters = json.loads(filters_json)
-		else:
-			filters = filters_json
+		# Parse filters (allow empty filters for sorting-only queries)
+		filters = {}
+		if filters_json:
+			if isinstance(filters_json, str):
+				filters = json.loads(filters_json)
+			else:
+				filters = filters_json
 		
 		# Get handler for this doctype
 		from exim_backend.api.doctypes import get_handler

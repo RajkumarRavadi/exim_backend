@@ -300,12 +300,40 @@
 					);
 					
 					if (!skipMessage && cleanMessage && cleanMessage.length > 5) {
-						addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', null, response.token_usage);
+						// Strip any HTML tags that AI might have returned (shouldn't happen, but just in case)
+						let messageText = cleanMessage;
+						if (/<[a-z][\s\S]*>/i.test(cleanMessage)) {
+							// Contains HTML tags - strip them and use the text content
+							messageText = stripHtmlTags(cleanMessage);
+						}
+						
+						// Convert markdown to HTML before passing to addMessage
+						const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(messageText);
+						if (hasMarkdown) {
+							addMessage(markdownToHtml(messageText), 'ai', null, response.token_usage);
+						} else {
+							// Plain text - wrap in paragraph
+							addMessage(`<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, 'ai', null, response.token_usage);
+						}
 					}
 					// Pass the original user message for context
 					autoExecuteAction(response.suggested_action, message);
 				} else {
-					addMessage(`<p>${escapeHtml(cleanMessage)}</p>`, 'ai', response.suggested_action, response.token_usage);
+					// Strip any HTML tags that AI might have returned (shouldn't happen, but just in case)
+					let messageText = cleanMessage;
+					if (/<[a-z][\s\S]*>/i.test(cleanMessage)) {
+						// Contains HTML tags - strip them and use the text content
+						messageText = stripHtmlTags(cleanMessage);
+					}
+					
+					// Convert markdown to HTML before passing to addMessage
+					const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(messageText);
+					if (hasMarkdown) {
+						addMessage(markdownToHtml(messageText), 'ai', response.suggested_action, response.token_usage);
+					} else {
+						// Plain text - wrap in paragraph
+						addMessage(`<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, 'ai', response.suggested_action, response.token_usage);
+					}
 				}
 			} else {
 				showError(response.message || 'An error occurred');
@@ -381,6 +409,155 @@
 		return div.innerHTML;
 	};
 
+	// Strip HTML tags from text (in case AI returns HTML as text)
+	const stripHtmlTags = (text) => {
+		if (!text) return '';
+		const div = document.createElement('div');
+		div.innerHTML = text;
+		return div.textContent || div.innerText || '';
+	};
+
+	// Convert markdown to HTML with clean, minimal styling
+	const markdownToHtml = (text) => {
+		if (!text) return '';
+		
+		// First, escape HTML to prevent XSS
+		let html = escapeHtml(text);
+		
+		// Convert code blocks first (before other processing)
+		html = html.replace(/```([\s\S]*?)```/g, '<pre class="ai-code-block"><code>$1</code></pre>');
+		
+		// IMPORTANT: Handle "* `field`" pattern BEFORE converting backticks to code
+		// This is the most common AI format for field lists
+		// Match lines that start with "* " followed by backticked text
+		html = html.replace(/^\*\s+`([^`\n]+)`/gm, '<li><code class="ai-inline-code">$1</code></li>');
+		
+		// Also handle "* `field` (description)" pattern
+		html = html.replace(/^\*\s+`([^`\n]+)`\s*\(([^)]+)\)/gm, '<li><code class="ai-inline-code">$1</code> ($2)</li>');
+		
+		// Now convert remaining inline code (but not inside code blocks or already converted list items)
+		html = html.replace(/`([^`\n]+)`/g, '<code class="ai-inline-code">$1</code>');
+		
+		// Detect patterns like "such as `field1` `field2` `field3`" and convert to list
+		// This pattern helps format field lists better (for cases without asterisks)
+		html = html.replace(/(such as|including|like|for example|I need|At minimum|At a minimum)[\s:]*((?:`[^`]+`[\s,]*)+)/gi, (match, prefix, fields) => {
+			// Extract individual field names
+			const fieldMatches = fields.match(/`([^`]+)`/g) || [];
+			if (fieldMatches.length > 1) {
+				// Convert to list format
+				const fieldList = fieldMatches.map(f => {
+					const fieldName = f.replace(/`/g, '');
+					return `<li><code class="ai-inline-code">${fieldName}</code></li>`;
+				}).join('');
+				return `${prefix}:<ul class="ai-field-list">${fieldList}</ul>`;
+			}
+			return match;
+		});
+		
+		// Convert bold (**text** or __text__) - but not single asterisks used for lists
+		html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+		html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+		
+		// Convert italic (*text* or _text_) - but be careful not to match list markers
+		// Only match single asterisks/underscores that are not part of bold or list markers
+		html = html.replace(/(?:\s|^)\*([^*\n\s]+?)\*(?:\s|$)/g, ' <em>$1</em> ');
+		html = html.replace(/(?:\s|^)_([^_\n\s]+?)_(?:\s|$)/g, ' <em>$1</em> ');
+		
+		// Split into lines for processing
+		const lines = html.split('\n');
+		const processedLines = [];
+		let inList = false;
+		let listItems = [];
+		let inParagraph = false;
+		let paragraphLines = [];
+		
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const trimmedLine = line.trim();
+			
+			// Check for bullet list items (*, -, +)
+			// Also handle cases like "* `field`" which might already be converted to <li>
+			if (/^[\*\-\+]\s+/.test(trimmedLine) || trimmedLine.startsWith('<li>')) {
+				// Close paragraph if open
+				if (inParagraph && paragraphLines.length > 0) {
+					processedLines.push(`<p class="ai-paragraph">${paragraphLines.join(' ')}</p>`);
+					paragraphLines = [];
+					inParagraph = false;
+				}
+				
+				if (!inList) {
+					inList = true;
+					listItems = [];
+				}
+				
+				// If already converted to <li>, use it directly
+				if (trimmedLine.startsWith('<li>')) {
+					listItems.push(trimmedLine);
+				} else {
+					const itemText = trimmedLine.replace(/^[\*\-\+]\s+/, '');
+					listItems.push(`<li>${itemText}</li>`);
+				}
+			}
+			// Check for numbered list items (1., 2., etc.)
+			else if (/^\d+\.\s+/.test(trimmedLine)) {
+				// Close paragraph if open
+				if (inParagraph && paragraphLines.length > 0) {
+					processedLines.push(`<p class="ai-paragraph">${paragraphLines.join(' ')}</p>`);
+					paragraphLines = [];
+					inParagraph = false;
+				}
+				
+				if (!inList) {
+					inList = true;
+					listItems = [];
+				}
+				const itemText = trimmedLine.replace(/^\d+\.\s+/, '');
+				listItems.push(`<li>${itemText}</li>`);
+			}
+			else {
+				// End current list if any
+				if (inList && listItems.length > 0) {
+					processedLines.push(`<ul class="ai-list">${listItems.join('')}</ul>`);
+					listItems = [];
+					inList = false;
+				}
+				
+				// Handle regular lines - group into paragraphs
+				if (trimmedLine) {
+					if (!inParagraph) {
+						inParagraph = true;
+						paragraphLines = [];
+					}
+					paragraphLines.push(trimmedLine);
+				} else {
+					// Empty line - close paragraph if open
+					if (inParagraph && paragraphLines.length > 0) {
+						processedLines.push(`<p class="ai-paragraph">${paragraphLines.join(' ')}</p>`);
+						paragraphLines = [];
+						inParagraph = false;
+					}
+				}
+			}
+		}
+		
+		// Close any remaining list
+		if (inList && listItems.length > 0) {
+			processedLines.push(`<ul class="ai-list">${listItems.join('')}</ul>`);
+		}
+		
+		// Close any remaining paragraph
+		if (inParagraph && paragraphLines.length > 0) {
+			processedLines.push(`<p class="ai-paragraph">${paragraphLines.join(' ')}</p>`);
+		}
+		
+		html = processedLines.join('');
+		
+		// Clean up multiple consecutive <br> tags
+		html = html.replace(/(<br>\s*){2,}/g, '<br>');
+		
+		return html;
+	};
+
 	// Add message to chat
 	const addMessage = (content, sender, suggestedAction = null, tokenUsage = null) => {
 		const messageDiv = document.createElement('div');
@@ -397,8 +574,13 @@
 		if (sender === 'user') {
 			messageContent.textContent = content;
 		} else {
-			// For AI messages, allow HTML formatting
-			messageContent.innerHTML = content;
+			// For AI messages, content should already be HTML (converted from markdown)
+			// Just render it directly
+			if (content && typeof content === 'string') {
+				messageContent.innerHTML = content;
+			} else {
+				messageContent.innerHTML = content || '';
+			}
 			
 			// Add token usage display if available
 			if (tokenUsage) {
@@ -623,6 +805,9 @@
 	
 	const autoExecuteAction = (action, originalQuestion = '') => {
 		console.log('Auto-executing:', action);
+		console.log('Original question:', originalQuestion);
+		// Use the passed originalQuestion, or fallback to lastUserQuestion
+		const questionToUse = originalQuestion || lastUserQuestion;
 		if (originalQuestion) {
 			lastUserQuestion = originalQuestion;
 		}
@@ -631,7 +816,7 @@
 		if (action.action === 'dynamic_search') {
 			handleDynamicSearch(action);
 		} else if (action.action === 'get_document_details' || action.action === 'get_customer_details') {
-			handleGetDocumentDetails(action, lastUserQuestion);
+			handleGetDocumentDetails(action, questionToUse);
 		} else if (action.action === 'find_duplicates' || action.action === 'find_duplicate_customers') {
 			handleFindDuplicates(action);
 		} else if (action.action === 'count_documents' || action.action === 'count_customers') {
@@ -751,6 +936,16 @@
 			hideTypingIndicator();
 
 			if (result.status === 'success') {
+				// Store document names in context for follow-up questions
+				if (result.document_names && result.document_names.length > 0) {
+					// Store in a global context variable for the AI to reference
+					window.lastQueryContext = {
+						doctype: doctype,
+						count: result.total_count,
+						document_names: result.document_names,
+						first_result: result.first_result || null
+					};
+				}
 				displayCustomerCount(result, doctype);
 			} else {
 				addMessage(`❌ ${result.message}`, 'ai');
@@ -771,6 +966,16 @@
 	const displayCustomerCount = (result, doctype = 'Customer') => {
 		const doctypeLabel = doctype.toLowerCase() + (doctype.toLowerCase().endsWith('s') ? '' : 's');
 		let message = `<p>You have <strong>${result.total_count} ${doctypeLabel}</strong> in total.</p>`;
+
+		// If document names are available (for small counts), include them in the message
+		// This helps the AI understand context for follow-up questions
+		if (result.document_names && result.document_names.length > 0) {
+			if (result.document_names.length === 1) {
+				message += `<p style="margin-top: 8px; color: #4b5563;">The ${doctypeLabel.slice(0, -1)} is: <strong>${escapeHtml(result.document_names[0])}</strong></p>`;
+			} else if (result.document_names.length <= 5) {
+				message += `<p style="margin-top: 8px; color: #4b5563;">${doctypeLabel.charAt(0).toUpperCase() + doctypeLabel.slice(1)}: ${result.document_names.map(name => `<strong>${escapeHtml(name)}</strong>`).join(', ')}</p>`;
+			}
+		}
 
 		if (result.by_territory && result.by_territory.length > 0) {
 			message += `<div style="margin-top: 12px;"><strong style="color: #1f2937;">By Territory:</strong><ul style="margin: 8px 0 0 20px; padding: 0; color: #4b5563;">`;
@@ -799,8 +1004,11 @@
 
 			const formData = new FormData();
 			formData.append('doctype', doctype);
-			formData.append('filters', JSON.stringify(action.filters));
+			formData.append('filters', JSON.stringify(action.filters || {}));
 			formData.append('limit', action?.limit || '20');
+			if (action?.order_by) {
+				formData.append('order_by', action.order_by);
+			}
 
 			const response = await fetch('/api/method/exim_backend.api.ai_chat.dynamic_search', {
 				method: 'POST',
@@ -865,6 +1073,7 @@
 		const doctypeSingular = detectedDoctype ? detectedDoctype.toLowerCase() : 'item';
 
 		let message = '';
+		const documentNames = []; // Store document names for context
 
 		if (result.count > 0 && results.length > 0) {
 			// Friendly introduction
@@ -887,9 +1096,17 @@
 				} else if (detectedDoctype === 'Item') {
 					itemName = item.item_name || item.item_code || item.name;
 					itemUrl = `${window.location.origin}/app/item/${encodeURIComponent(item.name)}`;
+				} else if (detectedDoctype === 'Sales Order') {
+					itemName = item.name || 'Unknown';
+					itemUrl = `${window.location.origin}/app/sales-order/${encodeURIComponent(item.name)}`;
 				} else {
 					itemName = item.name || item[`${detectedDoctype.toLowerCase()}_name`] || 'Unknown';
 					itemUrl = `${window.location.origin}/app/${detectedDoctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(item.name)}`;
+				}
+				
+				// Store document name for context
+				if (item.name) {
+					documentNames.push(item.name);
 				}
 				
 				message += `<div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
@@ -909,6 +1126,18 @@
 					if (item.stock_uom) details.push(`<span style="color: #4b5563;">UOM: ${escapeHtml(item.stock_uom)}</span>`);
 					if (item.standard_rate) details.push(`<span style="color: #4b5563;">Price: ${escapeHtml(item.standard_rate)}</span>`);
 					if (item.brand) details.push(`<span style="color: #4b5563;">Brand: ${escapeHtml(item.brand)}</span>`);
+				} else if (detectedDoctype === 'Sales Order') {
+					// Highlight grand_total prominently for Sales Orders
+					if (item.grand_total !== undefined && item.grand_total !== null) {
+						details.push(`<span style="color: #3b82f6; font-weight: 600; font-size: 15px;">💰 ${escapeHtml(item.currency || '')} ${escapeHtml(item.grand_total)}</span>`);
+					}
+					if (item.customer_name) details.push(`<span style="color: #4b5563;">Customer: ${escapeHtml(item.customer_name)}</span>`);
+					if (item.transaction_date) details.push(`<span style="color: #4b5563;">Date: ${escapeHtml(item.transaction_date)}</span>`);
+					if (item.status) {
+						const statusColor = item.status === 'Draft' ? '#f59e0b' : item.status === 'Completed' ? '#10b981' : '#6b7280';
+						details.push(`<span style="color: ${statusColor};">Status: ${escapeHtml(item.status)}</span>`);
+					}
+					if (item.company) details.push(`<span style="color: #4b5563;">Company: ${escapeHtml(item.company)}</span>`);
 				} else {
 					// Generic display for other doctypes
 					Object.keys(item).slice(0, 5).forEach(key => {
@@ -926,6 +1155,24 @@
 				message += `</div>`;
 			});
 			message += '</div>';
+			
+			// Store document names in context for follow-up questions
+			if (documentNames.length > 0) {
+				window.lastQueryContext = {
+					doctype: detectedDoctype,
+					count: result.count,
+					document_names: documentNames,
+					first_result: results.length === 1 ? results[0] : null
+				};
+				
+				// Add explicit text for AI to parse (hidden visually but in message text)
+				// This helps the AI extract document names from the conversation
+				if (documentNames.length === 1) {
+					message += `<p style="display: none;">Document name: ${documentNames[0]}</p>`;
+				} else {
+					message += `<p style="display: none;">Document names: ${documentNames.join(', ')}</p>`;
+				}
+			}
 		} else {
 			message = `<p>I couldn't find any ${doctypeLabel} matching your search criteria.</p><p style="margin-top: 8px; color: #6b7280;">💡 Try adjusting your search terms or filters.</p>`;
 		}
@@ -1085,7 +1332,8 @@ Instructions:
 - Be specific and provide the exact values - if a value is 0, say "0", don't say it's not available
 - If asking about multiple items (e.g., "all UOMs"), list them clearly
 - Format your answer clearly and concisely
-- IMPORTANT: If the data shows a value (even if it's 0), provide that value directly. Don't say you can't find it.`;
+- IMPORTANT: If the data shows a value (even if it's 0), provide that value directly. Don't say you can't find it.
+- CRITICAL: Use plain text format. DO NOT use markdown formatting like **bold**, *italic*, or special characters like * or **. Just provide clean, readable text.`;
 			
 			const formData = new FormData();
 			formData.append('message', prompt);
@@ -1116,7 +1364,15 @@ Instructions:
 				cleanAnswer = cleanAnswer.replace(/^\s*\{[\s\S]*"action"[\s\S]*\}\s*$/g, '').trim();
 				
 				if (cleanAnswer && cleanAnswer.length > 0) {
-					addMessage(`<p>${escapeHtml(cleanAnswer)}</p>`, 'ai', null, result.token_usage);
+					// Check if answer contains markdown formatting and convert it
+					const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(cleanAnswer);
+					if (hasMarkdown) {
+						// Convert markdown to HTML
+						addMessage(markdownToHtml(cleanAnswer), 'ai', null, result.token_usage);
+					} else {
+						// Plain text - wrap in paragraph
+						addMessage(`<p class="ai-paragraph">${escapeHtml(cleanAnswer)}</p>`, 'ai', null, result.token_usage);
+					}
 				} else {
 					// If AI didn't provide a good answer, fallback to generic display
 					console.warn('AI answer was empty or invalid, falling back to generic display');
@@ -1197,6 +1453,9 @@ Instructions:
 			console.log('Result keys:', result ? Object.keys(result) : 'result is null/undefined');
 			console.log('Doctype:', doctype);
 			console.log('Name:', name);
+			console.log('🔍 Checking result.sales_order:', result?.sales_order);
+			console.log('🔍 Type of result.sales_order:', typeof result?.sales_order);
+			console.log('🔍 Has sales_order key:', 'sales_order' in (result || {}));
 			console.log('═══════════════════════════════════════════════════════');
 			
 			hideTypingIndicator();
@@ -1213,19 +1472,48 @@ Instructions:
 				// Support doctype-specific and generic document formats
 				// Try different possible keys based on doctype
 				let document = null;
+				
+				console.log('🔍 Extracting document for doctype:', doctype);
+				console.log('🔍 Result keys:', Object.keys(result));
+				
 				if (doctype === 'Customer') {
 					document = result.customer || result.document;
+					console.log('🔍 Customer document found:', !!result.customer);
 				} else if (doctype === 'Item') {
 					document = result.item || result.document;
+					console.log('🔍 Item document found:', !!result.item);
+				} else if (doctype === 'Sales Order') {
+					// Sales Order uses underscore in API response
+					// Try multiple possible keys
+					document = result.sales_order || result['sales_order'] || result.salesOrder || result.document;
+					console.log('🔍 Sales Order document found:', !!result.sales_order);
+					console.log('🔍 result.sales_order:', result.sales_order);
+					console.log('🔍 result["sales_order"]:', result['sales_order']);
+					console.log('🔍 All result keys:', Object.keys(result || {}));
+					if (!document && result) {
+						// Try to find any key that contains the sales order data
+						for (const key in result) {
+							if (key.toLowerCase().includes('sales') || key.toLowerCase().includes('order')) {
+								console.log(`🔍 Found potential key: ${key}`, result[key]);
+								if (result[key] && typeof result[key] === 'object' && result[key].name) {
+									document = result[key];
+									console.log(`✅ Using key: ${key}`);
+									break;
+								}
+							}
+						}
+					}
 				} else {
-					// Generic: try doctype-specific key first, then generic
-					const doctypeKey = doctype.toLowerCase();
-					document = result[doctypeKey] || result.document;
+					// Generic: try doctype-specific key first (with underscore), then space, then generic
+					const doctypeKeyUnderscore = doctype.toLowerCase().replace(/\s+/g, '_');
+					const doctypeKeySpace = doctype.toLowerCase();
+					document = result[doctypeKeyUnderscore] || result[doctypeKeySpace] || result.document;
+					console.log('🔍 Generic doctype - trying:', doctypeKeyUnderscore, doctypeKeySpace);
 				}
 				
-				console.log('Extracted document:', document);
-				console.log('Document type:', typeof document);
-				console.log('Full result structure:', JSON.stringify(result, null, 2));
+				console.log('✅ Extracted document:', document);
+				console.log('✅ Document type:', typeof document);
+				console.log('✅ Document name:', document?.name);
 				
 				// Check if document exists and is a valid object
 				if (!document || typeof document !== 'object' || Array.isArray(document)) {
@@ -1263,9 +1551,63 @@ Instructions:
 				}
 				
 				// If original question exists, send document data to AI to answer the specific question
+				// BUT: For "detailed info", "complete info", "details", etc., just display directly without AI formatting
 				if (originalQuestion && originalQuestion.trim()) {
-					console.log('Original question detected, sending to AI for intelligent extraction:', originalQuestion);
-					await answerQuestionFromDocument(document, doctype, originalQuestion);
+					const questionLower = originalQuestion.toLowerCase();
+					console.log('🔍 Checking question for info request:', questionLower);
+					// Comprehensive detection: If asking for complete/detailed/full info, display directly
+					// Check for patterns like "give complete sales order info", "show full details", etc.
+					const isInfoRequest = 
+						questionLower.includes('detailed info') || 
+						questionLower.includes('complete info') ||
+						questionLower.includes('complete sales order info') ||
+						questionLower.includes('complete item info') ||
+						questionLower.includes('complete customer info') ||
+						questionLower.includes('full info') ||
+						questionLower.includes('full details') ||
+						questionLower.includes('all details') ||
+						questionLower.includes('all info') ||
+						questionLower.includes('give complete') ||
+						questionLower.includes('show complete') ||
+						questionLower.includes('give full') ||
+						questionLower.includes('show full') ||
+						questionLower.includes('give all') ||
+						questionLower.includes('show all') ||
+						questionLower.match(/give\s+(complete|full|all|detailed)\s+(sales\s+order|item|customer)?\s*info/i) ||
+						questionLower.match(/show\s+(complete|full|all|detailed)\s+(sales\s+order|item|customer)?\s*info/i) ||
+						questionLower.match(/give\s+(complete|full|all|detailed)\s+(sales\s+order|item|customer)?\s*details/i) ||
+						questionLower.match(/show\s+(complete|full|all|detailed)\s+(sales\s+order|item|customer)?\s*details/i) ||
+						(questionLower.includes('info') && (questionLower.includes('complete') || questionLower.includes('full') || questionLower.includes('all'))) ||
+						(questionLower.includes('details') && (questionLower.includes('complete') || questionLower.includes('full') || questionLower.includes('all'))) ||
+						questionLower.includes('details') || 
+						questionLower.includes('show details') || 
+						questionLower.includes('give details');
+					
+					console.log('🔍 Is info request?', isInfoRequest);
+					
+					if (isInfoRequest) {
+						console.log('Question asks for complete/detailed info - displaying directly without AI formatting');
+						// Display directly using appropriate function
+						if (doctype === 'Sales Order') {
+							if (typeof displaySalesOrderDetails === 'function') {
+								displaySalesOrderDetails(document);
+							} else {
+								displayDocumentDetails(document, doctype);
+							}
+						} else if (doctype === 'Customer') {
+							if (typeof displayCustomerDetails === 'function') {
+								displayCustomerDetails(document);
+							} else {
+								displayDocumentDetails(document, doctype);
+							}
+						} else {
+							displayDocumentDetails(document, doctype);
+						}
+					} else {
+						// For specific questions, use AI to extract answer
+						console.log('Original question detected, sending to AI for intelligent extraction:', originalQuestion);
+						await answerQuestionFromDocument(document, doctype, originalQuestion);
+					}
 				} else {
 					// Call display functions with additional safety (fallback to generic display)
 					try {
@@ -1284,6 +1626,18 @@ Instructions:
 								displayDocumentDetails(document, doctype);
 							} else {
 								throw new Error('displayDocumentDetails function not found');
+							}
+						} else if (doctype === 'Sales Order') {
+							// Final check before calling - document must exist and be valid
+							if (!document || typeof document !== 'object') {
+								throw new Error(`Document is ${document === null ? 'null' : typeof document} - cannot display`);
+							}
+							if (typeof displaySalesOrderDetails === 'function') {
+								displaySalesOrderDetails(document);
+							} else if (typeof displayDocumentDetails === 'function') {
+								displayDocumentDetails(document, doctype);
+							} else {
+								throw new Error('displaySalesOrderDetails function not found');
 							}
 						} else {
 							if (typeof displayDocumentDetails === 'function') {
@@ -1386,6 +1740,118 @@ Instructions:
 		message += '</div>';
 
 		addMessage(message, 'ai');
+	};
+
+	// Display Sales Order details
+	const displaySalesOrderDetails = (salesOrder) => {
+		try {
+			if (!salesOrder || typeof salesOrder !== 'object') {
+				console.error('displaySalesOrderDetails: salesOrder is invalid', salesOrder);
+				addMessage(`❌ Error: Sales Order data is missing or invalid.`, 'ai');
+				return;
+			}
+
+			const soName = salesOrder.name || 'Unknown';
+			const soUrl = `${window.location.origin}/app/sales-order/${encodeURIComponent(soName)}`;
+			
+			let message = `<div class="ai-document-details">`;
+			message += `<p class="ai-paragraph"><strong>Sales Order: ${escapeHtml(soName)}</strong></p>`;
+			
+			// Key Information Section
+			message += `<div style="margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px; border-left: 3px solid #3b82f6;">`;
+			
+			const keyInfo = [];
+			if (salesOrder.customer_name) keyInfo.push(`<span style="color: #374151;"><strong>Customer:</strong> ${escapeHtml(salesOrder.customer_name)}</span>`);
+			if (salesOrder.transaction_date) keyInfo.push(`<span style="color: #374151;"><strong>Date:</strong> ${escapeHtml(salesOrder.transaction_date)}</span>`);
+			if (salesOrder.delivery_date) keyInfo.push(`<span style="color: #374151;"><strong>Delivery Date:</strong> ${escapeHtml(salesOrder.delivery_date)}</span>`);
+			if (salesOrder.status) {
+				const statusColor = salesOrder.status === 'Draft' ? '#f59e0b' : salesOrder.status === 'Completed' ? '#10b981' : '#6b7280';
+				keyInfo.push(`<span style="color: #374151;"><strong>Status:</strong> <span style="color: ${statusColor};">${escapeHtml(salesOrder.status)}</span></span>`);
+			}
+			if (salesOrder.company) keyInfo.push(`<span style="color: #374151;"><strong>Company:</strong> ${escapeHtml(salesOrder.company)}</span>`);
+			if (salesOrder.grand_total !== undefined) keyInfo.push(`<span style="color: #374151;"><strong>Grand Total:</strong> ${escapeHtml(salesOrder.currency || '')} ${escapeHtml(salesOrder.grand_total)}</span>`);
+			
+			message += `<div style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 14px; line-height: 1.6;">${keyInfo.join('')}</div>`;
+			message += `</div>`;
+			
+			// Items Section
+			if (salesOrder.items && Array.isArray(salesOrder.items) && salesOrder.items.length > 0) {
+				message += `<div style="margin: 16px 0;">`;
+				message += `<p class="ai-paragraph" style="font-weight: 600; color: #111827; margin-bottom: 12px;">Items (${salesOrder.items.length}):</p>`;
+				message += `<div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;">`;
+				
+				salesOrder.items.forEach((item, index) => {
+					message += `<div style="padding: 12px; ${index < salesOrder.items.length - 1 ? 'border-bottom: 1px solid #e5e7eb;' : ''}">`;
+					message += `<div style="display: flex; justify-content: space-between; align-items: start;">`;
+					message += `<div style="flex: 1;">`;
+					message += `<div style="font-weight: 600; color: #111827; margin-bottom: 4px;">${escapeHtml(item.item_name || item.item_code || 'Unknown Item')}</div>`;
+					if (item.description) {
+						const descText = item.description.replace(/<[^>]*>/g, '').trim();
+						if (descText) {
+							message += `<div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">${escapeHtml(descText)}</div>`;
+						}
+					}
+					message += `<div style="font-size: 13px; color: #6b7280;">Qty: ${escapeHtml(item.qty || 0)} ${escapeHtml(item.uom || item.stock_uom || '')}</div>`;
+					message += `</div>`;
+					message += `<div style="text-align: right; margin-left: 16px;">`;
+					message += `<div style="font-size: 13px; color: #6b7280;">@ ${escapeHtml(salesOrder.currency || '')} ${escapeHtml(item.rate || 0)}</div>`;
+					message += `<div style="font-weight: 600; color: #3b82f6; margin-top: 4px;">${escapeHtml(salesOrder.currency || '')} ${escapeHtml(item.amount || 0)}</div>`;
+					message += `</div>`;
+					message += `</div>`;
+					message += `</div>`;
+				});
+				
+				message += `</div>`;
+				message += `</div>`;
+			}
+			
+			// Totals Section
+			if (salesOrder.grand_total !== undefined) {
+				message += `<div style="margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px;">`;
+				if (salesOrder.net_total !== undefined) {
+					message += `<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">`;
+					message += `<span style="color: #6b7280;">Subtotal:</span>`;
+					message += `<span style="color: #374151; font-weight: 500;">${escapeHtml(salesOrder.currency || '')} ${escapeHtml(salesOrder.net_total || salesOrder.total || 0)}</span>`;
+					message += `</div>`;
+				}
+				if (salesOrder.total_taxes_and_charges > 0) {
+					message += `<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">`;
+					message += `<span style="color: #6b7280;">Taxes & Charges:</span>`;
+					message += `<span style="color: #374151; font-weight: 500;">${escapeHtml(salesOrder.currency || '')} ${escapeHtml(salesOrder.total_taxes_and_charges)}</span>`;
+					message += `</div>`;
+				}
+				message += `<div style="display: flex; justify-content: space-between; padding-top: 8px; border-top: 2px solid #e5e7eb; margin-top: 8px;">`;
+				message += `<span style="color: #111827; font-weight: 600; font-size: 16px;">Grand Total:</span>`;
+				message += `<span style="color: #3b82f6; font-weight: 700; font-size: 16px;">${escapeHtml(salesOrder.currency || '')} ${escapeHtml(salesOrder.grand_total)}</span>`;
+				message += `</div>`;
+				message += `</div>`;
+			}
+			
+			// Payment Schedule
+			if (salesOrder.payment_schedule && Array.isArray(salesOrder.payment_schedule) && salesOrder.payment_schedule.length > 0) {
+				message += `<div style="margin: 16px 0;">`;
+				message += `<p class="ai-paragraph" style="font-weight: 600; color: #111827; margin-bottom: 12px;">Payment Schedule:</p>`;
+				message += `<ul class="ai-list">`;
+				salesOrder.payment_schedule.forEach(payment => {
+					const paymentText = `${escapeHtml(payment.payment_term || 'N/A')} - ${escapeHtml(salesOrder.currency || '')} ${escapeHtml(payment.payment_amount || 0)}`;
+					if (payment.due_date) {
+						message += `<li>${paymentText} (Due: ${escapeHtml(payment.due_date)})</li>`;
+					} else {
+						message += `<li>${paymentText}</li>`;
+					}
+				});
+				message += `</ul>`;
+				message += `</div>`;
+			}
+			
+			message += `<div style="margin-top: 16px;"><a href="${soUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Sales Order →</a></div>`;
+			message += '</div>';
+
+			addMessage(message, 'ai');
+		} catch (error) {
+			console.error('displaySalesOrderDetails error:', error, { salesOrder });
+			addMessage(`❌ Error displaying Sales Order details: ${error.message || 'Unknown error'}`, 'ai');
+		}
 	};
 
 	// Display generic document details

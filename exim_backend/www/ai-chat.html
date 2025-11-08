@@ -110,6 +110,77 @@
 		color: #2d3748;
 	}
 
+	/* Clean, minimal styling for AI message content */
+	.message.ai .message-content .ai-paragraph {
+		margin: 0 0 12px 0;
+		line-height: 1.6;
+		color: #374151;
+	}
+
+	.message.ai .message-content .ai-paragraph:last-child {
+		margin-bottom: 0;
+	}
+
+	.message.ai .message-content .ai-list {
+		margin: 8px 0 12px 0;
+		padding-left: 24px;
+		list-style-type: disc;
+	}
+
+	.message.ai .message-content .ai-list li {
+		margin: 4px 0;
+		line-height: 1.5;
+		color: #374151;
+	}
+
+	.message.ai .message-content .ai-field-list {
+		margin: 8px 0 12px 0;
+		padding-left: 24px;
+		list-style-type: disc;
+	}
+
+	.message.ai .message-content .ai-field-list li {
+		margin: 4px 0;
+		line-height: 1.5;
+		color: #374151;
+	}
+
+	.message.ai .message-content .ai-inline-code {
+		background: #f3f4f6;
+		padding: 2px 6px;
+		border-radius: 4px;
+		font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+		font-size: 0.9em;
+		color: #1f2937;
+	}
+
+	.message.ai .message-content .ai-code-block {
+		background: #f3f4f6;
+		padding: 12px;
+		border-radius: 6px;
+		overflow-x: auto;
+		margin: 12px 0;
+		font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+		font-size: 0.9em;
+		line-height: 1.5;
+	}
+
+	.message.ai .message-content .ai-code-block code {
+		background: transparent;
+		padding: 0;
+		color: #1f2937;
+	}
+
+	.message.ai .message-content strong {
+		font-weight: 600;
+		color: #111827;
+	}
+
+	.message.ai .message-content em {
+		font-style: italic;
+		color: #4b5563;
+	}
+
 	.typing-indicator {
 		display: none;
 		align-items: center;
