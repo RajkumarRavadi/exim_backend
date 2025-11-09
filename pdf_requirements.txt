@@ -1,0 +1,26 @@
+# PDF Processing Requirements
+# Install these packages for PDF sales order functionality
+
+# PDF text extraction
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+
+# PDF to image conversion (for AI vision processing)
+pdf2image>=1.16.0
+Pillow>=10.0.0
+
+# Image extraction from PDF
+PyMuPDF>=1.23.0  # Also known as fitz
+
+# Date parsing
+python-dateutil>=2.8.2
+
+# AI integration (uses your existing OpenRouter/Gemini setup)
+# No additional packages needed - uses requests (already installed)
+# For direct Gemini API (if not using OpenRouter):
+google-generativeai>=0.3.0
+
+# OCR support (optional, for scanned PDFs)
+# pytesseract>=0.3.10
+# Install Tesseract-OCR separately: https://github.com/tesseract-ocr/tesseract
+

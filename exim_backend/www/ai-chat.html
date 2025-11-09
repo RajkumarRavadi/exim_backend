@@ -442,7 +442,7 @@
 		<div style="display: flex; justify-content: space-between; align-items: center;">
 			<div>
 				<h1>🤖 AI Assistant</h1>
-				<p>Chat with AI to create ERPNext documents from text or images</p>
+				<p>Chat with AI to create ERPNext documents from text, images, or upload PDF to auto-create sales orders</p>
 			</div>
 			<button id="clearHistoryBtn" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'" title="Clear conversation history">
 				🗑️ Clear History
@@ -454,7 +454,7 @@
 		<div class="empty-state">
 			<div class="empty-state-icon">💬</div>
 			<h3>Welcome to AI Assistant</h3>
-			<p>Send a message or upload an image to get started</p>
+			<p>Send a message, upload an image, or upload a PDF sales order</p>
 		</div>
 	</div>
 
@@ -468,13 +468,13 @@
 				<textarea 
 					class="message-input" 
 					id="messageInput" 
-					placeholder="Type your message here..." 
+					placeholder="Type your message or upload a PDF to create a sales order..." 
 					rows="1"
 				></textarea>
 			</div>
 			<div class="action-buttons">
-				<input type="file" class="file-input" id="fileInput" accept="image/*">
-				<button class="btn-icon" id="uploadBtn" title="Upload image">
+				<input type="file" class="file-input" id="fileInput" accept="image/*,.pdf">
+				<button class="btn-icon" id="uploadBtn" title="Upload image or PDF">
 					📎
 				</button>
 				<button class="btn-icon btn-send" id="sendBtn" title="Send message">

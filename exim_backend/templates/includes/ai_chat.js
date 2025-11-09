@@ -14,6 +14,8 @@
 
 	// State
 	let currentImage = null;
+	let currentFile = null; // For PDFs
+	let currentFileType = null; // 'image' or 'pdf'
 	let isProcessing = false;
 	let sessionId = localStorage.getItem('ai_chat_session_id') || generateSessionId();
 	
@@ -65,32 +67,76 @@
 		}
 	};
 
-	// Handle image upload
+	// Handle file upload (image or PDF)
 	const handleImageUpload = (e) => {
 		const file = e.target.files[0];
 		if (!file) return;
 
-		// Validate file type
-		if (!file.type.startsWith('image/')) {
-			showError('Please upload a valid image file');
+		// Check if it's a PDF
+		if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+			// Handle PDF
+			currentFile = file;
+			currentFileType = 'pdf';
+			currentImage = null;
+			
+			// Show PDF preview
+			previewImg.style.display = 'none';
+			imagePreview.classList.add('active');
+			imagePreview.innerHTML = `
+				<div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #f0f4f8; flex-direction: column; gap: 5px;">
+					<div style="font-size: 32px;">📄</div>
+					<div style="font-size: 11px; text-align: center; padding: 0 5px; word-break: break-all;">${file.name}</div>
+				</div>
+				<button class="image-preview-remove" id="removeImage" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;">×</button>
+			`;
+			
+			// Re-attach remove event
+			const newRemoveBtn = document.getElementById('removeImage');
+			if (newRemoveBtn) {
+				newRemoveBtn.addEventListener('click', handleRemoveImage);
+			}
+			
 			return;
 		}
 
+		// Validate image file type
+		if (!file.type.startsWith('image/')) {
+			showError('Please upload a valid image or PDF file');
+			return;
+		}
+
+		// Handle image
+		currentFileType = 'image';
+		currentImage = file;
+		currentFile = null;
+		
 		// Preview image
 		const reader = new FileReader();
 		reader.onload = (event) => {
 			previewImg.src = event.target.result;
+			previewImg.style.display = 'block';
 			imagePreview.classList.add('active');
-			currentImage = file;
+			imagePreview.innerHTML = `
+				<img src="${event.target.result}" alt="Preview" id="previewImg" style="width: 100%; height: 100%; object-fit: cover;">
+				<button class="image-preview-remove" id="removeImage" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;">×</button>
+			`;
+			
+			// Re-attach remove event
+			const newRemoveBtn = document.getElementById('removeImage');
+			if (newRemoveBtn) {
+				newRemoveBtn.addEventListener('click', handleRemoveImage);
+			}
 		};
 		reader.readAsDataURL(file);
 	};
 
-	// Handle remove image
+	// Handle remove image/PDF
 	const handleRemoveImage = () => {
 		imagePreview.classList.remove('active');
 		previewImg.src = '';
 		currentImage = null;
+		currentFile = null;
+		currentFileType = null;
 		fileInput.value = '';
 	};
 
@@ -123,7 +169,7 @@
 					<div class="empty-state">
 						<div class="empty-state-icon">💬</div>
 						<h3>Welcome to AI Assistant</h3>
-						<p>Send a message or upload an image to get started</p>
+						<p>Send a message, upload an image, or upload a PDF sales order</p>
 					</div>
 				`;
 				showSuccess('Conversation history cleared');
@@ -141,8 +187,8 @@
 		const message = messageInput.value.trim();
 
 		// Validate input
-		if (!message && !currentImage) {
-			showError('Please enter a message or upload an image');
+		if (!message && !currentImage && !currentFile) {
+			showError('Please enter a message, upload an image, or upload a PDF');
 			return;
 		}
 
@@ -163,9 +209,20 @@
 			addImageMessage(currentImage, 'user');
 		}
 
+		if (currentFile) {
+			// Add PDF message
+			const pdfMessage = message ? `${message}\n\n📄 Analyzing: ${currentFile.name}` : `📄 Analyzing PDF for sales order: ${currentFile.name}`;
+			// Override the user message to include PDF info
+			if (!message) {
+				addMessage(pdfMessage, 'user');
+			}
+		}
+
 		// Clear input
 		const messageToSend = message;
 		const imageToSend = currentImage;
+		const fileToSend = currentFile;
+		const fileTypeToSend = currentFileType;
 		messageInput.value = '';
 		messageInput.style.height = 'auto';
 		handleRemoveImage();
@@ -179,7 +236,7 @@
 
 		// Send to API
 		try {
-			const response = await sendChatMessage(messageToSend, imageToSend);
+			const response = await sendChatMessage(messageToSend, imageToSend, fileToSend, fileTypeToSend);
 			hideTypingIndicator();
 
 			// Log prompt information to browser console
@@ -229,9 +286,19 @@
 				console.log('Action details:', JSON.stringify(response.suggested_action, null, 2));
 			}
 
+			// Handle PDF sales order response (requires_action = true)
+			if (response.status === 'success' && response.requires_action && response.response) {
+				console.log('PDF Sales Order Response detected');
+				const formattedMessage = formatPDFResponse(response.response);
+				addMessage(formattedMessage, 'ai', null, null);
+				isProcessing = false;
+				sendBtn.disabled = false;
+				return;
+			}
+
 			if (response.status === 'success') {
 				// Remove JSON from AI message if suggested action exists
-				let cleanMessage = response.message || '';
+				let cleanMessage = response.message || response.response || '';
 				
 				// If there's a suggested action, remove ALL JSON from the message
 				if (response.suggested_action) {
@@ -374,13 +441,18 @@
 	};
 
 	// Send message to API
-	const sendChatMessage = async (message, image) => {
+	const sendChatMessage = async (message, image, file, fileType) => {
 		const formData = new FormData();
 		formData.append('message', message);
 		formData.append('session_id', sessionId);
 		
 		if (image) {
 			formData.append('image', image);
+		}
+
+		if (file && fileType === 'pdf') {
+			// Send PDF file
+			formData.append('pdf', file);
 		}
 
 		const response = await fetch('/api/method/exim_backend.api.ai_chat.process_chat', {
@@ -415,6 +487,108 @@
 		const div = document.createElement('div');
 		div.innerHTML = text;
 		return div.textContent || div.innerText || '';
+	};
+
+	// Format PDF Sales Order response with nice HTML
+	const formatPDFResponse = (text) => {
+		if (!text) return '';
+		
+		let html = '<div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6;">';
+		
+		// Split into lines
+		const lines = text.split('\n').filter(line => line.trim());
+		
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i].trim();
+			
+			// Success header
+			if (line.includes('✅') || line.includes('PDF Analyzed Successfully')) {
+				html += `<div style="background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; margin-bottom: 16px; border-radius: 6px;">
+					<strong style="color: #059669; font-size: 16px;">${escapeHtml(line)}</strong>
+				</div>`;
+				continue;
+			}
+			
+			// Section headers with emojis
+			if (line.match(/^\*\*(.+?)\*\*:/) || line.match(/^(.+?):/)) {
+				const match = line.match(/^\*\*(.+?)\*\*:\s*(.*)/) || line.match(/^(.+?):\s*(.*)/);
+				if (match) {
+					const label = match[1].replace(/\*\*/g, '');
+					const value = match[2].replace(/\*\*/g, '');
+					html += `<div style="margin: 8px 0; display: flex; gap: 8px;">
+						<span style="color: #6366f1; font-weight: 600; min-width: 140px;">${escapeHtml(label)}:</span>
+						<span style="color: #1f2937; font-weight: 500;">${escapeHtml(value)}</span>
+					</div>`;
+					continue;
+				}
+			}
+			
+			// Items section header
+			if (line.includes('📦 Items:')) {
+				html += `<div style="margin-top: 16px; margin-bottom: 8px; padding: 8px 0; border-top: 1px solid #e5e7eb;">
+					<strong style="color: #4f46e5; font-size: 15px;">${escapeHtml(line)}</strong>
+				</div>`;
+				continue;
+			}
+			
+			// Item details (numbered lines)
+			if (line.match(/^\d+\.\s+\*\*(.+?)\*\*/)) {
+				const match = line.match(/^(\d+)\.\s+\*\*(.+?)\*\*/);
+				if (match) {
+					const itemNum = match[1];
+					const itemName = match[2];
+					html += `<div style="margin: 12px 0 4px 20px; background: #f9fafb; padding: 10px 12px; border-radius: 6px; border-left: 3px solid #818cf8;">
+						<strong style="color: #4338ca; font-size: 14px;">${escapeHtml(itemNum)}. ${escapeHtml(itemName)}</strong>`;
+					continue;
+				}
+			}
+			
+			// Item sub-details (• Qty, • Rate)
+			if (line.match(/^\s*•\s+(.+?):/)) {
+				const match = line.match(/^\s*•\s+(.+?):\s*(.+)/);
+				if (match) {
+					const prop = match[1];
+					const val = match[2];
+					html += `<div style="margin-left: 12px; color: #6b7280; font-size: 13px;">• ${escapeHtml(prop)}: <span style="color: #111827; font-weight: 500;">${escapeHtml(val)}</span></div>`;
+					continue;
+				}
+			}
+			
+			// Close item div if next line is not a sub-detail
+			if (html.includes('border-left: 3px solid #818cf8') && !line.match(/^\s*•/) && !line.match(/^\d+\./)) {
+				html += '</div>';
+			}
+			
+			// Action prompts section
+			if (line.includes('What would you like to do')) {
+				html += `<div style="margin-top: 20px; background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 6px;">
+					<strong style="color: #b45309; font-size: 14px;">${escapeHtml(line)}</strong>`;
+				continue;
+			}
+			
+			// Action bullet points
+			if (line.match(/^•\s+Type\s+\*\*/)) {
+				const actionText = line.replace(/\*\*/g, '').replace(/^•\s*/, '');
+				html += `<div style="margin: 6px 0 6px 12px; color: #78350f; font-size: 13px;">• ${escapeHtml(actionText)}</div>`;
+				continue;
+			}
+			
+			// Example lines
+			if (line.includes('Example:')) {
+				html += `<div style="margin-left: 28px; color: #9ca3af; font-size: 12px; font-style: italic;">${escapeHtml(line)}</div>`;
+				continue;
+			}
+			
+			// Default paragraph
+			if (line && !line.match(/^\s*$/)) {
+				html += `<p style="margin: 8px 0; color: #374151;">${escapeHtml(line)}</p>`;
+			}
+		}
+		
+		// Close any unclosed divs
+		html += '</div></div>';
+		
+		return html;
 	};
 
 	// Convert markdown to HTML with clean, minimal styling

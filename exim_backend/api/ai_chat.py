@@ -9,6 +9,15 @@ import time
 # Import the existing image extraction function
 from exim_backend.api.image_reader import extract_text_from_image
 
+# Import PDF chat integration for sales order creation from PDFs
+from exim_backend.api.pdf_chat_integration import (
+	PDFChatIntegration,
+	check_pdf_context,
+	handle_pdf_in_chat,
+	handle_pdf_response,
+	is_pdf_sales_order_intent
+)
+
 
 def estimate_tokens(text):
 	"""
@@ -333,16 +342,25 @@ def call_ai_api(messages, config, stream=False):
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def process_chat():
 	"""
-	Main chat endpoint that processes user messages and optional images.
-	Now supports conversation history, token counting, and streaming.
+	Main chat endpoint that processes user messages, images, and PDFs.
+	Now supports conversation history, token counting, streaming, and PDF sales order creation.
 	
 	API Endpoint: /api/method/exim_backend.api.ai_chat.process_chat
 	Accepts: 
 		- message (text): User's message
 		- image (file, optional): Image to extract text from
+		- pdf (file, optional): PDF file for sales order creation
+		- file (file, optional): Generic file upload (supports PDF)
 		- session_id (text, optional): Session ID for conversation history
 		- clear_history (bool, optional): Clear conversation history
 	Returns: AI response with suggested actions, token usage info
+	
+	PDF Sales Order Workflow:
+		1. Upload PDF with message containing "sales order" or "order"
+		2. AI extracts customer, items, dates, prices
+		3. User reviews extracted data
+		4. User confirms/modifies data
+		5. Sales order is created automatically
 	"""
 	try:
 		message = frappe.form_dict.get("message", "").strip()
@@ -355,6 +373,61 @@ def process_chat():
 		# Clear history if requested
 		if clear_hist:
 			clear_history(session_id)
+		
+		# ========== PDF SALES ORDER INTEGRATION START ==========
+		# Check if user has an active PDF session (awaiting confirmation/modification)
+		pdf_context = check_pdf_context(session_id)
+		if pdf_context.get("has_context"):
+			frappe.logger().info(f"Active PDF session found for {session_id[:10]}, handling response")
+			# User is in middle of PDF workflow - handle their response
+			pdf_result = handle_pdf_response(session_id, message)
+			
+			# Save to history
+			save_to_history(session_id, "user", message)
+			save_to_history(session_id, "assistant", pdf_result["message"])
+			
+			return {
+				"status": pdf_result.get("status", "success"),
+				"response": pdf_result["message"],
+				"requires_action": pdf_result.get("requires_action", False),
+				"completed": pdf_result.get("completed", False),
+				"cancelled": pdf_result.get("cancelled", False)
+			}
+		
+		# Check for PDF file upload
+		pdf_file = frappe.request.files.get("pdf") or frappe.request.files.get("file")
+		if pdf_file and pdf_file.filename.lower().endswith('.pdf'):
+			frappe.logger().info(f"PDF file uploaded: {pdf_file.filename}")
+			
+			# Save PDF to files
+			from frappe.utils.file_manager import save_file
+			file_doc = save_file(
+				fname=pdf_file.filename,
+				content=pdf_file.read(),
+				dt=None,
+				dn=None,
+				is_private=0
+			)
+			file_url = file_doc.file_url
+			
+			frappe.logger().info(f"PDF saved to: {file_url}")
+			
+			# AUTOMATICALLY process any PDF upload for sales order creation
+			frappe.logger().info(f"Automatically processing PDF for sales order creation")
+			pdf_result = handle_pdf_in_chat(file_url, session_id, message or "Create sales order from PDF")
+			
+			# Save to history
+			save_to_history(session_id, "user", f"{message or 'Uploaded PDF'} [PDF: {pdf_file.filename}]")
+			save_to_history(session_id, "assistant", pdf_result["message"])
+			
+			return {
+				"status": pdf_result.get("status", "success"),
+				"response": pdf_result["message"],
+				"requires_action": pdf_result.get("requires_action", False),
+				"data": pdf_result.get("data"),
+				"session_id": session_id
+			}
+		# ========== PDF SALES ORDER INTEGRATION END ==========
 		
 		if not message and not image_file:
 			frappe.response["http_status_code"] = 400
