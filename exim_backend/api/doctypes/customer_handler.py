@@ -145,22 +145,46 @@ class CustomerHandler(BaseDocTypeHandler):
 			doc = frappe.get_doc(self.doctype, name)
 			customer_data = doc.as_dict()
 			
-			# Get primary address
-			address = frappe.db.get_value(
-				"Address",
-				{"link_doctype": "Customer", "link_name": name, "is_primary_address": 1},
-				["name", "address_line1", "address_line2", "city", "state", "country", "pincode"],
-				as_dict=True
-			)
-			
-			if not address:
-				# Get any address if no primary
-				address = frappe.db.get_value(
-					"Address",
-					{"link_doctype": "Customer", "link_name": name},
-					["name", "address_line1", "address_line2", "city", "state", "country", "pincode"],
-					as_dict=True
-				)
+			# Get primary address (with error handling)
+			address = None
+			try:
+				# Check if Address DocType exists and has link_doctype and link_name fields
+				if frappe.db.exists("DocType", "Address"):
+					address_meta = frappe.get_meta("Address")
+					has_link_fields = any(f.fieldname == "link_doctype" for f in address_meta.fields) and \
+									  any(f.fieldname == "link_name" for f in address_meta.fields)
+					
+					if has_link_fields:
+						try:
+							address = frappe.db.get_value(
+								"Address",
+								{"link_doctype": "Customer", "link_name": name, "is_primary_address": 1},
+								["name", "address_line1", "address_line2", "city", "state", "country", "pincode"],
+								as_dict=True
+							)
+							
+							if not address:
+								# Get any address if no primary
+								address = frappe.db.get_value(
+									"Address",
+									{"link_doctype": "Customer", "link_name": name},
+									["name", "address_line1", "address_line2", "city", "state", "country", "pincode"],
+									as_dict=True
+								)
+						except Exception as db_error:
+							# Database error (e.g., column doesn't exist)
+							frappe.logger().warning(f"Database error fetching address for customer {name}: {str(db_error)}")
+							address = None
+					else:
+						# Address DocType exists but doesn't have link fields
+						frappe.logger().warning(f"Address DocType doesn't have link_doctype/link_name fields, skipping address fetch")
+				else:
+					# Address DocType doesn't exist
+					frappe.logger().warning(f"Address DocType doesn't exist, skipping address fetch")
+			except Exception as addr_error:
+				# Catch any other errors (meta access, etc.)
+				frappe.logger().warning(f"Failed to fetch address for customer {name}: {str(addr_error)}")
+				address = None
 			
 			customer_data["address"] = address
 			

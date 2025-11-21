@@ -3,6 +3,7 @@ AI Sales Order Extractor.
 Uses AI models to extract and structure sales order data from PDF content.
 """
 
+import copy
 import frappe
 import json
 import re
@@ -43,6 +44,7 @@ class AISalesOrderExtractor:
 			# Parse and validate the extracted data
 			extracted_data = extraction_result.get("data", {})
 			structured_data = self._structure_sales_order_data(extracted_data)
+			structured_data = self._merge_with_fallback_data(structured_data, formatted_content)
 			
 			return {
 				"status": "success",
@@ -70,16 +72,20 @@ class AISalesOrderExtractor:
 		# Extract text content
 		text_data = pdf_content.get("text", {})
 		formatted["text"] = text_data.get("full_text", "")
+		formatted["pages"] = text_data.get("pages", [])
 		
 		# Extract tables
 		tables = pdf_content.get("tables", [])
 		formatted["tables"] = tables
 		formatted["table_count"] = len(tables)
+		formatted["table_previews"] = self._build_table_previews(tables)
 		
 		# Check for images
 		images = pdf_content.get("images", [])
 		formatted["has_images"] = len(images) > 0
 		formatted["image_count"] = len(images)
+		
+		formatted["key_snippets"] = self._extract_key_snippets(formatted["pages"])
 		
 		return formatted
 	
@@ -413,11 +419,16 @@ Extract sales order information from the following PDF content and return it as 
 		
 		if tables:
 			prompt += f"\n**Tables Found:** {len(tables)} table(s)\n"
-			# Include first table preview
-			if len(tables) > 0:
-				table = tables[0]
-				prompt += f"\nFirst Table Headers: {table.get('headers', [])}\n"
-				prompt += f"First few rows: {table.get('rows', [])[:3]}\n"
+			if formatted_content.get("table_previews"):
+				for table_preview in formatted_content["table_previews"][:3]:
+					prompt += f"\nTable (Page {table_preview.get('page')}):\n"
+					prompt += f"Headers: {table_preview.get('headers')}\n"
+					prompt += f"Sample Rows: {table_preview.get('rows')}\n"
+
+		if formatted_content.get("key_snippets"):
+			prompt += "\n**Key Information Snippets:**\n"
+			for snippet in formatted_content["key_snippets"][:20]:
+				prompt += f"- {snippet}\n"
 		
 		prompt += """
 
@@ -499,6 +510,109 @@ Return the data as a well-structured JSON object.
 			structured["items"].append(structured_item)
 		
 		return structured
+
+	def _merge_with_fallback_data(self, structured_data, formatted_content):
+		"""
+		Merge AI extracted data with fallback extraction to fill missing fields.
+		"""
+		if not structured_data:
+			return structured_data
+		
+		fallback_raw = self._fallback_extraction(formatted_content)
+		if not fallback_raw:
+			return structured_data
+		
+		fallback_structured = self._structure_sales_order_data(fallback_raw)
+		merged_data = copy.deepcopy(structured_data)
+		
+		def is_missing(value):
+			if value is None:
+				return True
+			if isinstance(value, str) and not value.strip():
+				return True
+			if isinstance(value, list) and len(value) == 0:
+				return True
+			return False
+		
+		for field in ["customer", "transaction_date", "delivery_date", "po_no", "po_date", "company"]:
+			if is_missing(merged_data.get(field)) and fallback_structured.get(field):
+				merged_data[field] = fallback_structured.get(field)
+		
+		fallback_items = fallback_structured.get("items", [])
+		current_items = merged_data.get("items", [])
+		
+		if is_missing(current_items) and fallback_items:
+			merged_data["items"] = fallback_items
+		elif current_items and fallback_items:
+			merged_items = []
+			for idx, item in enumerate(current_items):
+				fallback_item = fallback_items[idx] if idx < len(fallback_items) else {}
+				merged_item = item.copy()
+				for field in ["item_code", "item_name", "qty", "rate", "uom"]:
+					if is_missing(merged_item.get(field)) and fallback_item.get(field):
+						merged_item[field] = fallback_item.get(field)
+				merged_items.append(merged_item)
+			
+			# Append extra fallback items if AI missed them
+			if len(fallback_items) > len(merged_items):
+				merged_items.extend(fallback_items[len(merged_items):])
+			
+			merged_data["items"] = merged_items
+		
+		return merged_data
+
+	def _build_table_previews(self, tables):
+		"""Build normalized table previews for the AI prompt."""
+		previews = []
+		for table in tables[:5]:
+			headers = table.get("headers") or []
+			normalized_headers = [self._normalize_header(header) for header in headers if header]
+			rows = table.get("rows") or []
+			preview_rows = rows[:3]
+			previews.append({
+				"page": table.get("page"),
+				"headers": normalized_headers,
+				"rows": preview_rows
+			})
+		return previews
+
+	def _normalize_header(self, header):
+		if not header:
+			return ""
+		header_text = str(header).strip()
+		header_text = re.sub(r'\s+', ' ', header_text)
+		return header_text
+
+	def _extract_key_snippets(self, pages):
+		"""Extract important snippets (customer, PO, dates, totals) to guide the AI."""
+		if not pages:
+			return []
+		
+		keywords = {
+			"Customer": ["customer", "client", "bill to", "sold to", "ship to"],
+			"PO": ["purchase order", "po#", "po no", "order no", "quote no"],
+			"Dates": ["date", "delivery", "ship date", "due date"],
+			"Totals": ["total", "subtotal", "amount", "balance"]
+		}
+		
+		snippets = []
+		for page in pages:
+			page_text = page.get("text") or ""
+			if not page_text:
+				continue
+			
+			lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+			for line in lines:
+				lower_line = line.lower()
+				for label, terms in keywords.items():
+					if any(term in lower_line for term in terms):
+						snippets.append(f"[{label} | Page {page.get('page_number')}] {line}")
+						break
+			
+			if len(snippets) >= 40:
+				break
+		
+		return snippets
 	
 	def _normalize_date(self, date_str):
 		"""

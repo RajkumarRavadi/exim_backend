@@ -27,6 +27,10 @@ class PDFSalesOrderHandler:
 		self.ai_extractor = AISalesOrderExtractor()
 		self.sales_order_handler = SalesOrderHandler()
 		self.session_cache = {}
+		self.skip_validation = frappe.conf.get("pdf_sales_order_skip_validation", True)
+		self.default_customer_name = frappe.conf.get("pdf_sales_order_default_customer")
+		self.default_company_name = frappe.conf.get("pdf_sales_order_default_company")
+		self.default_item_code = frappe.conf.get("pdf_sales_order_default_item")
 	
 	def process_pdf(self, file_path_or_url, session_id=None):
 		"""
@@ -300,6 +304,39 @@ class PDFSalesOrderHandler:
 		Validate and enrich the extracted sales order data.
 		Checks for required fields, validates customer/items exist, etc.
 		"""
+		if getattr(self, "skip_validation", False):
+			data = extracted_data.copy()
+			data["_warnings"] = data.get("_warnings", [])
+			
+			# Ensure customer is present
+			if not data.get("customer"):
+				default_customer = self._get_default_customer()
+				if default_customer:
+					data["customer"] = default_customer.get("name")
+					data["customer_name"] = default_customer.get("customer_name")
+			
+			# Ensure company is present
+			company_name = data.get("company")
+			if not company_name or not frappe.db.exists("Company", company_name):
+				default_company = self._get_default_company()
+				if default_company:
+					data["company"] = default_company
+			
+			# Ensure at least one item exists
+			items = data.get("items") or []
+			if not items:
+				default_item = self._get_default_item()
+				if default_item:
+					data["items"] = [{
+						"item_code": default_item.get("item_code"),
+						"item_name": default_item.get("item_name"),
+						"qty": 1,
+						"rate": default_item.get("standard_rate") or 0,
+						"uom": default_item.get("stock_uom")
+					}]
+			
+			return data
+
 		warnings = []
 		validated_data = extracted_data.copy()
 		
@@ -374,6 +411,59 @@ class PDFSalesOrderHandler:
 					cleaned_data[key] = value
 		
 		return cleaned_data
+	def _get_default_customer(self):
+		"""Get default customer details for fallback."""
+		try:
+			if self.default_customer_name:
+				customer_name = frappe.db.exists("Customer", self.default_customer_name)
+				if customer_name:
+					doc = frappe.get_doc("Customer", customer_name)
+					return {"name": doc.name, "customer_name": doc.customer_name}
+			
+			customer_doc = frappe.get_all("Customer", fields=["name", "customer_name"], limit=1)
+			if customer_doc:
+				return customer_doc[0]
+		except Exception as e:
+			frappe.logger().error(f"Default customer fetch failed: {str(e)}")
+		return None
+
+	def _get_default_item(self):
+		"""Get default item details for fallback."""
+		try:
+			if self.default_item_code:
+				item_name = frappe.db.exists("Item", self.default_item_code)
+				if item_name:
+					doc = frappe.get_doc("Item", item_name)
+					return {
+						"item_code": doc.name,
+						"item_name": doc.item_name,
+						"stock_uom": doc.stock_uom,
+						"standard_rate": getattr(doc, "standard_rate", 0)
+					}
+			
+			item_doc = frappe.get_all("Item", fields=["name as item_code", "item_name", "stock_uom", "standard_rate"], limit=1)
+			if item_doc:
+				return item_doc[0]
+		except Exception as e:
+			frappe.logger().error(f"Default item fetch failed: {str(e)}")
+		return None
+
+	def _get_default_company(self):
+		"""Get default company to use when extracted company is invalid."""
+		try:
+			if self.default_company_name and frappe.db.exists("Company", self.default_company_name):
+				return self.default_company_name
+			
+			default_company = frappe.db.get_single_value("Global Defaults", "default_company")
+			if default_company and frappe.db.exists("Company", default_company):
+				return default_company
+			
+			company_doc = frappe.get_all("Company", fields=["name"], limit=1)
+			if company_doc:
+				return company_doc[0]["name"]
+		except Exception as e:
+			frappe.logger().error(f"Default company fetch failed: {str(e)}")
+		return None
 	
 	def _generate_session_id(self):
 		"""Generate a unique session ID."""

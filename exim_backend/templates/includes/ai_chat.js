@@ -1,16 +1,19 @@
-// AI Chat Interface JavaScript
-(function() {
+// AI Chat Interface JavaScript - Custom Modern UI
+(function () {
 	'use strict';
 
 	// DOM Elements
-	const chatMessages = document.getElementById('chatMessages');
+	const messagesContainer = document.getElementById('messagesContainer');
+	const messagesWrapper = document.getElementById('messagesWrapper');
 	const messageInput = document.getElementById('messageInput');
 	const sendBtn = document.getElementById('sendBtn');
-	const uploadBtn = document.getElementById('uploadBtn');
+	const attachBtn = document.getElementById('attachBtn');
 	const fileInput = document.getElementById('fileInput');
-	const imagePreview = document.getElementById('imagePreview');
-	const previewImg = document.getElementById('previewImg');
-	const removeImage = document.getElementById('removeImage');
+	const filePreview = document.getElementById('filePreview');
+	const removeFileBtn = document.getElementById('removeFileBtn');
+	const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+	const newChatBtn = document.getElementById('newChatBtn');
+	const emptyState = document.getElementById('emptyState');
 
 	// State
 	let currentImage = null;
@@ -18,7 +21,14 @@
 	let currentFileType = null; // 'image' or 'pdf'
 	let isProcessing = false;
 	let sessionId = localStorage.getItem('ai_chat_session_id') || generateSessionId();
-	
+
+	// Toggle for intelligent query system (set to true to use new system)
+	// INTELLIGENT QUERY SYSTEM DISABLED - Using traditional functional approach
+	let useIntelligentQuery = false; // DISABLED - Commented out intelligent query features
+
+	// Log initial state
+	// console.log('%c🧠 Intelligent Query System Status:', 'color: #2196F3; font-weight: bold;', useIntelligentQuery ? 'ENABLED' : 'DISABLED');
+
 	// Generate or retrieve session ID
 	function generateSessionId() {
 		const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -29,22 +39,33 @@
 	// Initialize
 	const init = () => {
 		setupEventListeners();
-		clearEmptyState();
+		console.log('AI Chat initialized with session:', sessionId);
 	};
 
 	// Event Listeners
 	const setupEventListeners = () => {
-		sendBtn.addEventListener('click', handleSendMessage);
-		uploadBtn.addEventListener('click', () => fileInput.click());
-		fileInput.addEventListener('change', handleImageUpload);
-		removeImage.addEventListener('click', handleRemoveImage);
-		
-		// Clear history button
-		const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-		if (clearHistoryBtn) {
-			clearHistoryBtn.addEventListener('click', handleClearHistory);
+		if (!sendBtn || !messageInput) {
+			console.error('Required DOM elements not found!');
+			return;
 		}
-		
+
+		sendBtn.addEventListener('click', handleSendMessage);
+		if (attachBtn) attachBtn.addEventListener('click', () => fileInput.click());
+		if (fileInput) fileInput.addEventListener('change', handleFileUpload);
+		if (removeFileBtn) removeFileBtn.addEventListener('click', handleRemoveFile);
+		if (clearHistoryBtn) clearHistoryBtn.addEventListener('click', handleClearHistory);
+		if (newChatBtn) newChatBtn.addEventListener('click', handleNewChat);
+
+		// Example prompts
+		const examplePrompts = document.querySelectorAll('.example-prompt');
+		examplePrompts.forEach(prompt => {
+			prompt.addEventListener('click', () => {
+				messageInput.value = prompt.dataset.prompt;
+				messageInput.focus();
+			});
+		});
+
+		// Enter to send
 		messageInput.addEventListener('keydown', (e) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
@@ -55,89 +76,90 @@
 		// Auto-resize textarea
 		messageInput.addEventListener('input', () => {
 			messageInput.style.height = 'auto';
-			messageInput.style.height = messageInput.scrollHeight + 'px';
+			messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
 		});
 	};
 
-	// Clear empty state
-	const clearEmptyState = () => {
-		const emptyState = chatMessages.querySelector('.empty-state');
-		if (emptyState && chatMessages.children.length > 1) {
-			emptyState.remove();
-		}
-	};
-
 	// Handle file upload (image or PDF)
-	const handleImageUpload = (e) => {
+	const handleFileUpload = (e) => {
 		const file = e.target.files[0];
 		if (!file) return;
 
-		// Check if it's a PDF
-		if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-			// Handle PDF
+		const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+		const isImage = file.type.startsWith('image/');
+
+		if (!isPDF && !isImage) {
+			showNotification('Please upload a valid image or PDF file', 'error');
+			return;
+		}
+
+		if (isPDF) {
 			currentFile = file;
 			currentFileType = 'pdf';
 			currentImage = null;
-			
-			// Show PDF preview
-			previewImg.style.display = 'none';
-			imagePreview.classList.add('active');
-			imagePreview.innerHTML = `
-				<div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #f0f4f8; flex-direction: column; gap: 5px;">
-					<div style="font-size: 32px;">📄</div>
-					<div style="font-size: 11px; text-align: center; padding: 0 5px; word-break: break-all;">${file.name}</div>
-				</div>
-				<button class="image-preview-remove" id="removeImage" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;">×</button>
-			`;
-			
-			// Re-attach remove event
-			const newRemoveBtn = document.getElementById('removeImage');
-			if (newRemoveBtn) {
-				newRemoveBtn.addEventListener('click', handleRemoveImage);
-			}
-			
-			return;
+			showFilePreview('📄', file.name, formatFileSize(file.size));
+		} else {
+			currentImage = file;
+			currentFileType = 'image';
+			currentFile = null;
+			const reader = new FileReader();
+			reader.onload = (event) => {
+				showFilePreview('🖼️', file.name, formatFileSize(file.size), event.target.result);
+			};
+			reader.readAsDataURL(file);
 		}
-
-		// Validate image file type
-		if (!file.type.startsWith('image/')) {
-			showError('Please upload a valid image or PDF file');
-			return;
-		}
-
-		// Handle image
-		currentFileType = 'image';
-		currentImage = file;
-		currentFile = null;
-		
-		// Preview image
-		const reader = new FileReader();
-		reader.onload = (event) => {
-			previewImg.src = event.target.result;
-			previewImg.style.display = 'block';
-			imagePreview.classList.add('active');
-			imagePreview.innerHTML = `
-				<img src="${event.target.result}" alt="Preview" id="previewImg" style="width: 100%; height: 100%; object-fit: cover;">
-				<button class="image-preview-remove" id="removeImage" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;">×</button>
-			`;
-			
-			// Re-attach remove event
-			const newRemoveBtn = document.getElementById('removeImage');
-			if (newRemoveBtn) {
-				newRemoveBtn.addEventListener('click', handleRemoveImage);
-			}
-		};
-		reader.readAsDataURL(file);
 	};
 
-	// Handle remove image/PDF
-	const handleRemoveImage = () => {
-		imagePreview.classList.remove('active');
-		previewImg.src = '';
+	// Show file preview
+	const showFilePreview = (icon, name, size, imageUrl = null) => {
+		const fileIcon = document.getElementById('fileIcon');
+		const fileName = document.getElementById('fileName');
+		const fileSize = document.getElementById('fileSize');
+
+		if (!fileIcon || !fileName || !fileSize) return;
+
+		if (imageUrl) {
+			fileIcon.style.backgroundImage = `url(${imageUrl})`;
+			fileIcon.style.backgroundSize = 'cover';
+			fileIcon.style.backgroundPosition = 'center';
+			fileIcon.textContent = '';
+		} else {
+			fileIcon.style.backgroundImage = 'none';
+			fileIcon.textContent = icon;
+		}
+
+		fileName.textContent = name;
+		fileSize.textContent = size;
+		filePreview.classList.add('active');
+	};
+
+	// Handle remove file
+	const handleRemoveFile = () => {
+		if (!filePreview) return;
+		filePreview.classList.remove('active');
 		currentImage = null;
 		currentFile = null;
 		currentFileType = null;
-		fileInput.value = '';
+		if (fileInput) fileInput.value = '';
+	};
+
+	// Format file size
+	const formatFileSize = (bytes) => {
+		if (bytes === 0) return '0 Bytes';
+		const k = 1024;
+		const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+	};
+
+	// Handle new chat
+	const handleNewChat = () => {
+		sessionId = generateSessionId();
+		if (messagesWrapper) messagesWrapper.innerHTML = '';
+		if (emptyState) emptyState.style.display = 'flex';
+		handleRemoveFile();
+		if (messageInput) messageInput.value = '';
+		showNotification('New chat started', 'success');
 	};
 
 	// Handle clear history
@@ -164,21 +186,15 @@
 
 			const result = await response.json();
 			if (result.status === 'success' || (result.message && result.message.status === 'success')) {
-				// Clear chat messages (keep empty state)
-				chatMessages.innerHTML = `
-					<div class="empty-state">
-						<div class="empty-state-icon">💬</div>
-						<h3>Welcome to AI Assistant</h3>
-						<p>Send a message, upload an image, or upload a PDF sales order</p>
-					</div>
-				`;
-				showSuccess('Conversation history cleared');
+				if (messagesWrapper) messagesWrapper.innerHTML = '';
+				if (emptyState) emptyState.style.display = 'flex';
+				showNotification('Conversation history cleared', 'success');
 			} else {
-				showError('Failed to clear history');
+				showNotification('Failed to clear history', 'error');
 			}
 		} catch (error) {
 			console.error('Clear history error:', error);
-			showError('Failed to clear history. Please try again.');
+			showNotification('Failed to clear history. Please try again.', 'error');
 		}
 	};
 
@@ -188,65 +204,98 @@
 
 		// Validate input
 		if (!message && !currentImage && !currentFile) {
-			showError('Please enter a message, upload an image, or upload a PDF');
+			showNotification('Please enter a message or attach a file', 'error');
 			return;
 		}
 
 		if (isProcessing) return;
 
-		// Clear empty state
-		const emptyState = chatMessages.querySelector('.empty-state');
+		// Hide empty state
 		if (emptyState) {
-			emptyState.remove();
+			emptyState.style.display = 'none';
 		}
 
-		// Add user message to chat
+		// Add user message
 		if (message) {
-			addMessage(message, 'user');
+			addMessage('user', message);
 		}
 
 		if (currentImage) {
-			addImageMessage(currentImage, 'user');
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				addImageMessage('user', e.target.result);
+			};
+			reader.readAsDataURL(currentImage);
 		}
 
 		if (currentFile) {
-			// Add PDF message
-			const pdfMessage = message ? `${message}\n\n📄 Analyzing: ${currentFile.name}` : `📄 Analyzing PDF for sales order: ${currentFile.name}`;
-			// Override the user message to include PDF info
+			const pdfMessage = message ?
+				`${message}\n\n📄 Analyzing: ${currentFile.name}` :
+				`📄 Analyzing PDF for sales order: ${currentFile.name}`;
 			if (!message) {
-				addMessage(pdfMessage, 'user');
+				addMessage('user', pdfMessage);
 			}
 		}
 
-		// Clear input
+		// Store message details
 		const messageToSend = message;
 		const imageToSend = currentImage;
 		const fileToSend = currentFile;
 		const fileTypeToSend = currentFileType;
+
+		// Clear input
 		messageInput.value = '';
 		messageInput.style.height = 'auto';
-		handleRemoveImage();
+		handleRemoveFile();
 
 		// Show typing indicator
-		showTypingIndicator();
+		const typingId = showTypingIndicator();
 
 		// Disable send button
 		isProcessing = true;
 		sendBtn.disabled = true;
 
-		// Send to API
+		// Send to API - Choose between old and new system
 		try {
-			const response = await sendChatMessage(messageToSend, imageToSend, fileToSend, fileTypeToSend);
-			hideTypingIndicator();
+			let response;
+
+			// INTELLIGENT QUERY SYSTEM DISABLED - Always use traditional functional approach
+			// Check if we should use intelligent query (only for text queries, not file uploads)
+			// if (useIntelligentQuery && messageToSend && !imageToSend && !fileToSend) {
+			// 	console.log('%c🧠 Using Intelligent Query System', 'color: #2196F3; font-weight: bold; font-size: 14px;');
+			// 	console.log('Query:', messageToSend);
+			// 	console.log('useIntelligentQuery flag:', useIntelligentQuery);
+			// 	try {
+			// 		response = await sendIntelligentQuery(messageToSend);
+			// 		console.log('Intelligent Query Response:', response);
+			// 	} catch (error) {
+			// 		console.error('Intelligent Query failed, error will be shown to user:', error);
+			// 		// Re-throw to show error in UI instead of silently falling back
+			// 		throw error;
+			// 	}
+			// } else {
+			// 	const reason = !useIntelligentQuery ? 'useIntelligentQuery is false' : 
+			// 	               !messageToSend ? 'no message' : 
+			// 	               'file/image attached';
+			// 	console.log('%c⚡ Using Traditional System', 'color: #4CAF50; font-weight: bold; font-size: 14px;');
+			// 	console.log('Reason:', reason);
+			// 	response = await sendChatMessage(messageToSend, imageToSend, fileToSend, fileTypeToSend);
+			// }
+
+			// Always use traditional functional approach
+			console.log('%c⚡ Using Traditional Functional System', 'color: #4CAF50; font-weight: bold; font-size: 14px;');
+			response = await sendChatMessage(messageToSend, imageToSend, fileToSend, fileTypeToSend);
+
+			hideTypingIndicator(typingId);
 
 			// Log prompt information to browser console
 			if (response.prompt_info) {
 				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
 				console.log('%c📋 PROMPT SENT TO AI', 'color: #3b82f6; font-weight: bold; font-size: 16px;');
 				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
-				
+
 				const promptInfo = response.prompt_info;
-				
+
 				console.log('%c📊 Summary:', 'color: #10b981; font-weight: bold;');
 				console.log({
 					'Detected DocTypes': promptInfo.detected_doctypes,
@@ -254,10 +303,10 @@
 					'History Count': promptInfo.history_count,
 					'System Prompt Length': `${promptInfo.system_prompt_length} chars (${promptInfo.system_prompt_tokens} tokens)`
 				});
-				
+
 				console.log('%c\n📝 System Prompt Preview:', 'color: #10b981; font-weight: bold;');
 				console.log(promptInfo.system_prompt_preview);
-				
+
 				console.log('%c\n📋 Messages Summary:', 'color: #10b981; font-weight: bold;');
 				promptInfo.messages_summary.forEach((msg, idx) => {
 					console.log(`%c[${idx + 1}] ${msg.role.toUpperCase()}`, 'color: #f59e0b; font-weight: bold;', {
@@ -266,22 +315,36 @@
 						'Tokens': msg.tokens
 					});
 				});
-				
+
 				console.log('%c\n📦 Full Messages Array:', 'color: #10b981; font-weight: bold;');
 				console.log(promptInfo.full_messages);
-				
+
 				console.log('%c\n💾 Full Prompt Info Object:', 'color: #10b981; font-weight: bold;');
 				console.log(promptInfo);
-				
+
 				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
 				console.log('%c✅ END OF PROMPT LOG', 'color: #3b82f6; font-weight: bold; font-size: 16px;');
 				console.log('%c═══════════════════════════════════════════════════════════════', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
 			}
 
 			console.log('API Response:', response);
+
+			// INTELLIGENT QUERY SYSTEM DISABLED
+			// Handle Intelligent Query Response
+			// if (response.execution_type) {
+			// 	console.log('%c🧠 Intelligent Query Response', 'color: #2196F3; font-weight: bold;');
+			// 	console.log('Execution Type:', response.execution_type);
+			// 	console.log('AI Reasoning:', response.ai_reasoning);
+			// 	console.log('Detected DocTypes:', response.detected_doctypes);
+			// 	displayIntelligentQueryResults(response);
+			// 	isProcessing = false;
+			// 	sendBtn.disabled = false;
+			// 	return;
+			// }
+
 			console.log('Suggested action:', response.suggested_action);
 			console.log('Suggested action type:', typeof response.suggested_action);
-			
+
 			if (response.suggested_action) {
 				console.log('Action details:', JSON.stringify(response.suggested_action, null, 2));
 			}
@@ -289,8 +352,25 @@
 			// Handle PDF sales order response (requires_action = true)
 			if (response.status === 'success' && response.requires_action && response.response) {
 				console.log('PDF Sales Order Response detected');
-				const formattedMessage = formatPDFResponse(response.response);
-				addMessage(formattedMessage, 'ai', null, null);
+				console.log('PDF Response data:', response.data);
+				console.log('PDF Session ID:', response.session_id);
+
+				let formattedMessage = formatPDFResponse(response.response);
+				console.log('Formatted PDF message:', formattedMessage);
+
+				// Also format and display the structured data if available
+				if (response.data && typeof response.data === 'object') {
+					const dataDisplay = formatPDFData(response.data);
+					formattedMessage += dataDisplay;
+				}
+
+				// Add action buttons for PDF confirmation
+				const actionButtons = createPDFActionButtons(response.session_id, response.data);
+				console.log('Action buttons:', actionButtons);
+				const messageWithActions = formattedMessage + actionButtons;
+				console.log('Complete message with actions:', messageWithActions);
+
+				addMessage('ai', messageWithActions, null, null);
 				isProcessing = false;
 				sendBtn.disabled = false;
 				return;
@@ -299,7 +379,7 @@
 			if (response.status === 'success') {
 				// Remove JSON from AI message if suggested action exists
 				let cleanMessage = response.message || response.response || '';
-				
+
 				// If there's a suggested action, remove ALL JSON from the message
 				if (response.suggested_action) {
 					// Remove any JSON objects (including nested ones)
@@ -311,7 +391,7 @@
 					cleanMessage = cleanMessage.replace(/["\s]*action["\s]*[:=]/gi, '').trim();
 					cleanMessage = cleanMessage.replace(/["\s]*filters["\s]*[:=]/gi, '').trim();
 					cleanMessage = cleanMessage.replace(/[{},":\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-					
+
 					// If message is now empty or just contains JSON remnants, use a default message
 					if (!cleanMessage || cleanMessage.length < 5 || cleanMessage.match(/^[\s\w]*$/i)) {
 						const action = response.suggested_action.action;
@@ -332,25 +412,25 @@
 						}
 					}
 				}
-				
+
 				// Remove code block markers if still present
 				if (cleanMessage.includes('```')) {
 					cleanMessage = cleanMessage.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 				}
-				
+
 				// Final cleanup - remove any remaining special characters that look like JSON
 				cleanMessage = cleanMessage.replace(/^[,\s}]+|[,\s{]+$/g, '').trim();
-				
+
 				console.log('Clean message:', cleanMessage);
 				console.log('Passing suggested_action:', response.suggested_action);
-				
+
 				// Display token usage if available
 				if (response.token_usage) {
 					console.log('Token usage:', response.token_usage);
 					const tokenInfo = `📊 Tokens: ${response.token_usage.input_tokens} in + ${response.token_usage.output_tokens} out = ${response.token_usage.total_tokens} total`;
 					console.log(tokenInfo);
 				}
-				
+
 				// Check if action should be executed immediately
 				if (response.suggested_action && response.suggested_action.execute_immediately) {
 					console.log('Auto-executing action:', response.suggested_action.action);
@@ -365,7 +445,7 @@
 						cleanMessage.toLowerCase().includes("however if you") ||
 						cleanMessage.match(/^[\s\w]*$/i) // Just whitespace/words (likely JSON remnants)
 					);
-					
+
 					if (!skipMessage && cleanMessage && cleanMessage.length > 5) {
 						// Strip any HTML tags that AI might have returned (shouldn't happen, but just in case)
 						let messageText = cleanMessage;
@@ -373,14 +453,14 @@
 							// Contains HTML tags - strip them and use the text content
 							messageText = stripHtmlTags(cleanMessage);
 						}
-						
+
 						// Convert markdown to HTML before passing to addMessage
 						const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(messageText);
 						if (hasMarkdown) {
-							addMessage(markdownToHtml(messageText), 'ai', null, response.token_usage);
+							addMessage('ai', markdownToHtml(messageText), response.token_usage, null);
 						} else {
 							// Plain text - wrap in paragraph
-							addMessage(`<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, 'ai', null, response.token_usage);
+							addMessage('ai', `<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, response.token_usage, null);
 						}
 					}
 					// Pass the original user message for context
@@ -392,22 +472,22 @@
 						// Contains HTML tags - strip them and use the text content
 						messageText = stripHtmlTags(cleanMessage);
 					}
-					
+
 					// Convert markdown to HTML before passing to addMessage
 					const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(messageText);
 					if (hasMarkdown) {
-						addMessage(markdownToHtml(messageText), 'ai', response.suggested_action, response.token_usage);
+						addMessage('ai', markdownToHtml(messageText), response.token_usage, response.suggested_action);
 					} else {
 						// Plain text - wrap in paragraph
-						addMessage(`<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, 'ai', response.suggested_action, response.token_usage);
+						addMessage('ai', `<p class="ai-paragraph">${escapeHtml(messageText)}</p>`, response.token_usage, response.suggested_action);
 					}
 				}
 			} else {
-				showError(response.message || 'An error occurred');
+				showNotification(response.message || 'An error occurred', 'error');
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			showError('Failed to send message. Please try again.');
+			hideTypingIndicator(typingId);
+			showNotification('Failed to send message. Please try again.', 'error');
 			console.error('Chat error:', error);
 		} finally {
 			isProcessing = false;
@@ -418,7 +498,7 @@
 	// Get CSRF token
 	const getCSRFToken = () => {
 		let token = '';
-		
+
 		// Try getting from frappe object
 		if (typeof frappe !== 'undefined' && frappe.csrf_token) {
 			token = frappe.csrf_token;
@@ -432,11 +512,11 @@
 				console.log('CSRF token from meta tag:', token);
 			}
 		}
-		
+
 		if (!token) {
 			console.warn('WARNING: No CSRF token found! This will cause 400 errors.');
 		}
-		
+
 		return token;
 	};
 
@@ -445,7 +525,7 @@
 		const formData = new FormData();
 		formData.append('message', message);
 		formData.append('session_id', sessionId);
-		
+
 		if (image) {
 			formData.append('image', image);
 		}
@@ -492,15 +572,15 @@
 	// Format PDF Sales Order response with nice HTML
 	const formatPDFResponse = (text) => {
 		if (!text) return '';
-		
+
 		let html = '<div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6;">';
-		
+
 		// Split into lines
 		const lines = text.split('\n').filter(line => line.trim());
-		
+
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i].trim();
-			
+
 			// Success header
 			if (line.includes('✅') || line.includes('PDF Analyzed Successfully')) {
 				html += `<div style="background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; margin-bottom: 16px; border-radius: 6px;">
@@ -508,7 +588,7 @@
 				</div>`;
 				continue;
 			}
-			
+
 			// Section headers with emojis
 			if (line.match(/^\*\*(.+?)\*\*:/) || line.match(/^(.+?):/)) {
 				const match = line.match(/^\*\*(.+?)\*\*:\s*(.*)/) || line.match(/^(.+?):\s*(.*)/);
@@ -522,7 +602,7 @@
 					continue;
 				}
 			}
-			
+
 			// Items section header
 			if (line.includes('📦 Items:')) {
 				html += `<div style="margin-top: 16px; margin-bottom: 8px; padding: 8px 0; border-top: 1px solid #e5e7eb;">
@@ -530,7 +610,7 @@
 				</div>`;
 				continue;
 			}
-			
+
 			// Item details (numbered lines)
 			if (line.match(/^\d+\.\s+\*\*(.+?)\*\*/)) {
 				const match = line.match(/^(\d+)\.\s+\*\*(.+?)\*\*/);
@@ -542,7 +622,7 @@
 					continue;
 				}
 			}
-			
+
 			// Item sub-details (• Qty, • Rate)
 			if (line.match(/^\s*•\s+(.+?):/)) {
 				const match = line.match(/^\s*•\s+(.+?):\s*(.+)/);
@@ -553,65 +633,415 @@
 					continue;
 				}
 			}
-			
+
 			// Close item div if next line is not a sub-detail
 			if (html.includes('border-left: 3px solid #818cf8') && !line.match(/^\s*•/) && !line.match(/^\d+\./)) {
 				html += '</div>';
 			}
-			
+
 			// Action prompts section
 			if (line.includes('What would you like to do')) {
 				html += `<div style="margin-top: 20px; background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 6px;">
 					<strong style="color: #b45309; font-size: 14px;">${escapeHtml(line)}</strong>`;
 				continue;
 			}
-			
+
 			// Action bullet points
 			if (line.match(/^•\s+Type\s+\*\*/)) {
 				const actionText = line.replace(/\*\*/g, '').replace(/^•\s*/, '');
 				html += `<div style="margin: 6px 0 6px 12px; color: #78350f; font-size: 13px;">• ${escapeHtml(actionText)}</div>`;
 				continue;
 			}
-			
+
 			// Example lines
 			if (line.includes('Example:')) {
 				html += `<div style="margin-left: 28px; color: #9ca3af; font-size: 12px; font-style: italic;">${escapeHtml(line)}</div>`;
 				continue;
 			}
-			
+
 			// Default paragraph
 			if (line && !line.match(/^\s*$/)) {
 				html += `<p style="margin: 8px 0; color: #374151;">${escapeHtml(line)}</p>`;
 			}
 		}
-		
-		// Close any unclosed divs
-		html += '</div></div>';
-		
+
+		// Close action prompts div if it was opened
+		if (html.includes('background: #fef3c7')) {
+			html += '</div>';
+		}
+
+		// Close the main container div
+		html += '</div>';
+
 		return html;
+	};
+
+	// Format structured PDF data for display
+	const formatPDFData = (data) => {
+		if (!data || typeof data !== 'object') return '';
+
+		let html = '<div style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 12px; border: 1px solid #dee2e6;">';
+		html += '<h3 style="font-size: 18px; font-weight: 700; color: #1f2937; margin: 0 0 16px 0; padding-bottom: 12px; border-bottom: 2px solid #667eea;">📋 Extracted Sales Order Data</h3>';
+
+		// Display main fields
+		const mainFields = ['customer', 'transaction_date', 'delivery_date', 'po_no', 'company'];
+		mainFields.forEach(field => {
+			if (data[field] !== null && data[field] !== undefined && data[field] !== '') {
+				const label = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+				html += `<div style="margin: 8px 0; padding: 8px; background: white; border-radius: 6px;">
+					<span style="color: #6366f1; font-weight: 600; min-width: 160px; display: inline-block;">${escapeHtml(label)}:</span>
+					<span style="color: #1f2937; font-weight: 500;">${escapeHtml(String(data[field]))}</span>
+				</div>`;
+			}
+		});
+
+		// Display items
+		if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+			html += '<div style="margin-top: 16px; padding-top: 16px; border-top: 2px solid #e5e7eb;">';
+			html += '<h4 style="font-size: 16px; font-weight: 600; color: #4f46e5; margin-bottom: 12px;">📦 Items (' + data.items.length + ')</h4>';
+
+			data.items.forEach((item, index) => {
+				html += `<div style="margin: 12px 0; padding: 12px; background: white; border-radius: 8px; border-left: 4px solid #818cf8;">`;
+				html += `<div style="font-weight: 700; color: #4338ca; margin-bottom: 8px;">${index + 1}. ${escapeHtml(item.item_name || item.item_code || 'Item ' + (index + 1))}</div>`;
+
+				if (item.item_code) {
+					html += `<div style="margin: 4px 0; color: #6b7280; font-size: 14px;">• Item Code: <span style="color: #1f2937; font-weight: 500;">${escapeHtml(item.item_code)}</span></div>`;
+				}
+				if (item.qty) {
+					html += `<div style="margin: 4px 0; color: #6b7280; font-size: 14px;">• Quantity: <span style="color: #1f2937; font-weight: 500;">${escapeHtml(String(item.qty))}</span></div>`;
+				}
+				if (item.rate) {
+					html += `<div style="margin: 4px 0; color: #6b7280; font-size: 14px;">• Rate: <span style="color: #1f2937; font-weight: 500;">${escapeHtml(String(item.rate))}</span></div>`;
+				}
+				if (item.amount) {
+					html += `<div style="margin: 4px 0; color: #6b7280; font-size: 14px;">• Amount: <span style="color: #1f2937; font-weight: 500;">${escapeHtml(String(item.amount))}</span></div>`;
+				}
+
+				html += '</div>';
+			});
+
+			html += '</div>';
+		}
+
+		// Display warnings if any
+		if (data._warnings && Array.isArray(data._warnings) && data._warnings.length > 0) {
+			html += '<div style="margin-top: 16px; padding: 12px; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 6px;">';
+			html += '<strong style="color: #b45309; font-size: 14px;">⚠️ Warnings:</strong>';
+			data._warnings.forEach(warning => {
+				html += `<div style="margin: 4px 0; color: #78350f; font-size: 13px;">• ${escapeHtml(warning)}</div>`;
+			});
+			html += '</div>';
+		}
+
+		html += '</div>';
+		return html;
+	};
+
+	// Create action buttons for PDF sales order confirmation
+	const createPDFActionButtons = (sessionId, pdfData) => {
+		if (!sessionId) return '';
+
+		const buttonContainer = `
+			<div style="
+				margin-top: 24px;
+				padding: 20px;
+				background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+				border-radius: 12px;
+				border: 2px solid #0ea5e9;
+				display: flex;
+				gap: 12px;
+				flex-wrap: wrap;
+				align-items: center;
+				justify-content: center;
+			">
+				<button 
+					onclick="handlePDFConfirm('${sessionId}')"
+					style="
+						background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+						color: white;
+						border: none;
+						padding: 12px 24px;
+						border-radius: 8px;
+						font-size: 15px;
+						font-weight: 600;
+						cursor: pointer;
+						box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);
+						transition: all 0.2s;
+						display: inline-flex;
+						align-items: center;
+						gap: 8px;
+					"
+					onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 12px rgba(16, 185, 129, 0.4)';"
+					onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px rgba(16, 185, 129, 0.3)';"
+				>
+					✅ Confirm & Create Sales Order
+				</button>
+				
+				<button 
+					onclick="handlePDFCancel('${sessionId}')"
+					style="
+						background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+						color: white;
+						border: none;
+						padding: 12px 24px;
+						border-radius: 8px;
+						font-size: 15px;
+						font-weight: 600;
+						cursor: pointer;
+						box-shadow: 0 4px 6px rgba(239, 68, 68, 0.3);
+						transition: all 0.2s;
+						display: inline-flex;
+						align-items: center;
+						gap: 8px;
+					"
+					onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 12px rgba(239, 68, 68, 0.4)';"
+					onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px rgba(239, 68, 68, 0.3)';"
+				>
+					❌ Cancel
+				</button>
+				
+				<button 
+					onclick="handlePDFShowData('${sessionId}')"
+					style="
+						background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+						color: white;
+						border: none;
+						padding: 12px 24px;
+						border-radius: 8px;
+						font-size: 15px;
+						font-weight: 600;
+						cursor: pointer;
+						box-shadow: 0 4px 6px rgba(99, 102, 241, 0.3);
+						transition: all 0.2s;
+						display: inline-flex;
+						align-items: center;
+						gap: 8px;
+					"
+					onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 12px rgba(99, 102, 241, 0.4)';"
+					onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px rgba(99, 102, 241, 0.3)';"
+				>
+					👁️ Show Data
+				</button>
+			</div>
+		`;
+
+		return buttonContainer;
+	};
+
+	// Handle PDF confirmation
+	window.handlePDFConfirm = async (sessionId) => {
+		if (!sessionId) {
+			showNotification('Session ID not found', 'error');
+			return;
+		}
+
+		const typingId = showTypingIndicator();
+		isProcessing = true;
+		sendBtn.disabled = true;
+
+		try {
+			const response = await fetch('/api/method/exim_backend.api.pdf_chat_integration.handle_pdf_response', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: JSON.stringify({
+					conversation_id: sessionId,
+					user_message: 'confirm'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const result = await response.json();
+			const pdfResponse = result.message || result;
+
+			console.log('PDF Confirm Response:', pdfResponse);
+			console.log('Response status:', pdfResponse.status);
+			console.log('Response message:', pdfResponse.message);
+			console.log('Response response:', pdfResponse.response);
+
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+
+			// Add user confirmation message
+			addMessage('user', '✅ Confirm & Create Sales Order');
+
+			// Check for success
+			if (pdfResponse.status === 'success' || pdfResponse.message?.includes('success') || pdfResponse.response?.includes('success')) {
+				// Get the success message
+				const successMessage = pdfResponse.message || pdfResponse.response || pdfResponse.sales_order_name || 'Sales order created successfully!';
+
+				// Create a nice success message display
+				let successHtml = '<div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6;">';
+				successHtml += '<div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left: 4px solid #10b981; padding: 16px 20px; margin-bottom: 16px; border-radius: 8px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);">';
+				successHtml += '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">';
+				successHtml += '<span style="font-size: 24px;">✅</span>';
+				successHtml += '<strong style="color: #059669; font-size: 18px;">Sales Order Created Successfully!</strong>';
+				successHtml += '</div>';
+
+				// Add sales order details if available
+				if (pdfResponse.sales_order_name) {
+					successHtml += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #a7f3d0;">`;
+					successHtml += `<div style="color: #047857; font-size: 14px; margin: 4px 0;"><strong>Sales Order:</strong> ${escapeHtml(pdfResponse.sales_order_name)}</div>`;
+					if (pdfResponse.customer) {
+						successHtml += `<div style="color: #047857; font-size: 14px; margin: 4px 0;"><strong>Customer:</strong> ${escapeHtml(pdfResponse.customer)}</div>`;
+					}
+					if (pdfResponse.grand_total) {
+						successHtml += `<div style="color: #047857; font-size: 14px; margin: 4px 0;"><strong>Grand Total:</strong> ${escapeHtml(String(pdfResponse.grand_total))}</div>`;
+					}
+					successHtml += `</div>`;
+				}
+
+				// Add the message text if it's different from the default
+				if (successMessage && !successMessage.includes('Sales order created successfully')) {
+					successHtml += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #a7f3d0; color: #047857; font-size: 14px;">${escapeHtml(successMessage)}</div>`;
+				}
+
+				successHtml += '</div>';
+				successHtml += '</div>';
+
+				addMessage('ai', successHtml, null, null);
+				showNotification('Sales order created successfully!', 'success');
+			} else {
+				// Error case
+				const errorMessage = pdfResponse.message || pdfResponse.response || 'Failed to create sales order';
+				const errorHtml = `<div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 16px 20px; border-radius: 8px;">
+					<strong style="color: #dc2626; font-size: 16px;">❌ Error</strong>
+					<div style="color: #991b1b; font-size: 14px; margin-top: 8px;">${escapeHtml(errorMessage)}</div>
+				</div>`;
+				addMessage('ai', errorHtml, null, null);
+				showNotification(errorMessage, 'error');
+			}
+		} catch (error) {
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+			console.error('Error confirming PDF:', error);
+			showNotification('Failed to confirm PDF: ' + error.message, 'error');
+		}
+	};
+
+	// Handle PDF cancellation
+	window.handlePDFCancel = async (sessionId) => {
+		if (!sessionId) {
+			showNotification('Session ID not found', 'error');
+			return;
+		}
+
+		const typingId = showTypingIndicator();
+		isProcessing = true;
+		sendBtn.disabled = true;
+
+		try {
+			const response = await fetch('/api/method/exim_backend.api.pdf_chat_integration.handle_pdf_response', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: JSON.stringify({
+					conversation_id: sessionId,
+					user_message: 'cancel'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const result = await response.json();
+			const pdfResponse = result.message || result;
+
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+
+			addMessage('user', '❌ Cancel');
+			const formattedMessage = formatPDFResponse(pdfResponse.message || pdfResponse.response || 'PDF session cancelled.');
+			addMessage(formattedMessage, 'ai', null, null);
+			showNotification('PDF session cancelled', 'info');
+		} catch (error) {
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+			console.error('Error cancelling PDF:', error);
+			showNotification('Failed to cancel PDF: ' + error.message, 'error');
+		}
+	};
+
+	// Handle PDF show data
+	window.handlePDFShowData = async (sessionId) => {
+		if (!sessionId) {
+			showNotification('Session ID not found', 'error');
+			return;
+		}
+
+		const typingId = showTypingIndicator();
+		isProcessing = true;
+		sendBtn.disabled = true;
+
+		try {
+			const response = await fetch('/api/method/exim_backend.api.pdf_chat_integration.handle_pdf_response', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: JSON.stringify({
+					conversation_id: sessionId,
+					user_message: 'show data'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const result = await response.json();
+			const pdfResponse = result.message || result;
+
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+
+			addMessage('user', '👁️ Show Data');
+			const formattedMessage = formatPDFResponse(pdfResponse.message || pdfResponse.response || 'No data available.');
+			addMessage(formattedMessage, 'ai', null, null);
+		} catch (error) {
+			hideTypingIndicator(typingId);
+			isProcessing = false;
+			sendBtn.disabled = false;
+			console.error('Error showing PDF data:', error);
+			showNotification('Failed to show PDF data: ' + error.message, 'error');
+		}
 	};
 
 	// Convert markdown to HTML with clean, minimal styling
 	const markdownToHtml = (text) => {
 		if (!text) return '';
-		
+
 		// First, escape HTML to prevent XSS
 		let html = escapeHtml(text);
-		
+
 		// Convert code blocks first (before other processing)
 		html = html.replace(/```([\s\S]*?)```/g, '<pre class="ai-code-block"><code>$1</code></pre>');
-		
+
 		// IMPORTANT: Handle "* `field`" pattern BEFORE converting backticks to code
 		// This is the most common AI format for field lists
 		// Match lines that start with "* " followed by backticked text
 		html = html.replace(/^\*\s+`([^`\n]+)`/gm, '<li><code class="ai-inline-code">$1</code></li>');
-		
+
 		// Also handle "* `field` (description)" pattern
 		html = html.replace(/^\*\s+`([^`\n]+)`\s*\(([^)]+)\)/gm, '<li><code class="ai-inline-code">$1</code> ($2)</li>');
-		
+
 		// Now convert remaining inline code (but not inside code blocks or already converted list items)
 		html = html.replace(/`([^`\n]+)`/g, '<code class="ai-inline-code">$1</code>');
-		
+
 		// Detect patterns like "such as `field1` `field2` `field3`" and convert to list
 		// This pattern helps format field lists better (for cases without asterisks)
 		html = html.replace(/(such as|including|like|for example|I need|At minimum|At a minimum)[\s:]*((?:`[^`]+`[\s,]*)+)/gi, (match, prefix, fields) => {
@@ -627,16 +1057,16 @@
 			}
 			return match;
 		});
-		
+
 		// Convert bold (**text** or __text__) - but not single asterisks used for lists
 		html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 		html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
-		
+
 		// Convert italic (*text* or _text_) - but be careful not to match list markers
 		// Only match single asterisks/underscores that are not part of bold or list markers
 		html = html.replace(/(?:\s|^)\*([^*\n\s]+?)\*(?:\s|$)/g, ' <em>$1</em> ');
 		html = html.replace(/(?:\s|^)_([^_\n\s]+?)_(?:\s|$)/g, ' <em>$1</em> ');
-		
+
 		// Split into lines for processing
 		const lines = html.split('\n');
 		const processedLines = [];
@@ -644,11 +1074,11 @@
 		let listItems = [];
 		let inParagraph = false;
 		let paragraphLines = [];
-		
+
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			const trimmedLine = line.trim();
-			
+
 			// Check for bullet list items (*, -, +)
 			// Also handle cases like "* `field`" which might already be converted to <li>
 			if (/^[\*\-\+]\s+/.test(trimmedLine) || trimmedLine.startsWith('<li>')) {
@@ -658,12 +1088,12 @@
 					paragraphLines = [];
 					inParagraph = false;
 				}
-				
+
 				if (!inList) {
 					inList = true;
 					listItems = [];
 				}
-				
+
 				// If already converted to <li>, use it directly
 				if (trimmedLine.startsWith('<li>')) {
 					listItems.push(trimmedLine);
@@ -680,7 +1110,7 @@
 					paragraphLines = [];
 					inParagraph = false;
 				}
-				
+
 				if (!inList) {
 					inList = true;
 					listItems = [];
@@ -695,7 +1125,7 @@
 					listItems = [];
 					inList = false;
 				}
-				
+
 				// Handle regular lines - group into paragraphs
 				if (trimmedLine) {
 					if (!inParagraph) {
@@ -713,102 +1143,201 @@
 				}
 			}
 		}
-		
+
 		// Close any remaining list
 		if (inList && listItems.length > 0) {
 			processedLines.push(`<ul class="ai-list">${listItems.join('')}</ul>`);
 		}
-		
+
 		// Close any remaining paragraph
 		if (inParagraph && paragraphLines.length > 0) {
 			processedLines.push(`<p class="ai-paragraph">${paragraphLines.join(' ')}</p>`);
 		}
-		
+
 		html = processedLines.join('');
-		
+
 		// Clean up multiple consecutive <br> tags
 		html = html.replace(/(<br>\s*){2,}/g, '<br>');
-		
+
 		return html;
 	};
 
 	// Add message to chat
-	const addMessage = (content, sender, suggestedAction = null, tokenUsage = null) => {
+	// Add message to chat
+	const addMessage = (type, content, tokenUsage = null, suggestedAction = null) => {
+		if (!messagesWrapper) return;
+
 		const messageDiv = document.createElement('div');
-		messageDiv.className = `message ${sender}`;
+		messageDiv.className = `message ${type}`;
 
 		const avatar = document.createElement('div');
 		avatar.className = 'message-avatar';
-		avatar.textContent = sender === 'user' ? 'U' : '🤖';
+		avatar.textContent = type === 'user' ? 'U' : 'AI';
 
-		const messageContent = document.createElement('div');
-		messageContent.className = 'message-content';
-		
-		// Use innerHTML to support HTML formatting, but escape for user messages
-		if (sender === 'user') {
-			messageContent.textContent = content;
-		} else {
-			// For AI messages, content should already be HTML (converted from markdown)
-			// Just render it directly
-			if (content && typeof content === 'string') {
-				messageContent.innerHTML = content;
-			} else {
-				messageContent.innerHTML = content || '';
-			}
-			
-			// Add token usage display if available
-			if (tokenUsage) {
-				const tokenDiv = document.createElement('div');
-				tokenDiv.style.cssText = 'margin-top: 8px; font-size: 11px; color: #9ca3af; font-style: italic;';
-				tokenDiv.textContent = `📊 ${tokenUsage.input_tokens} in + ${tokenUsage.output_tokens} out = ${tokenUsage.total_tokens} tokens`;
-				messageContent.appendChild(tokenDiv);
-			}
+		const contentDiv = document.createElement('div');
+		contentDiv.className = 'message-content';
+		contentDiv.innerHTML = content;
+
+		if (type === 'ai' && tokenUsage) {
+			const tokenInfo = document.createElement('div');
+			tokenInfo.className = 'token-usage';
+			tokenInfo.textContent = `Tokens: ${tokenUsage.input_tokens} in + ${tokenUsage.output_tokens} out = ${tokenUsage.total_tokens} total`;
+			contentDiv.appendChild(tokenInfo);
 		}
 
 		messageDiv.appendChild(avatar);
-		messageDiv.appendChild(messageContent);
+		messageDiv.appendChild(contentDiv);
 
-		// Add suggested action if present
-		if (suggestedAction && suggestedAction.action) {
-			console.log('Creating action element for:', suggestedAction.action);
-			const actionDiv = createSuggestedActionElement(suggestedAction);
-			if (actionDiv) {
-				messageContent.appendChild(actionDiv);
+		// Add suggested actions if present
+		if (suggestedAction && type === 'ai') {
+			const actionsDiv = createSuggestedActions(suggestedAction);
+			if (actionsDiv) {
+				contentDiv.appendChild(actionsDiv);
 			}
 		}
 
-		chatMessages.appendChild(messageDiv);
+		messagesWrapper.appendChild(messageDiv);
 		scrollToBottom();
 	};
 
 	// Add image message
-	const addImageMessage = (file, sender) => {
+	const addImageMessage = (type, imageUrl) => {
+		if (!messagesWrapper) return;
+
 		const messageDiv = document.createElement('div');
-		messageDiv.className = `message ${sender}`;
+		messageDiv.className = `message ${type}`;
 
 		const avatar = document.createElement('div');
 		avatar.className = 'message-avatar';
-		avatar.textContent = sender === 'user' ? 'U' : '🤖';
+		avatar.textContent = type === 'user' ? 'U' : 'AI';
 
-		const messageContent = document.createElement('div');
-		messageContent.className = 'message-content';
+		const contentDiv = document.createElement('div');
+		contentDiv.className = 'message-content';
 
 		const img = document.createElement('img');
-		img.style.maxWidth = '200px';
-		img.style.borderRadius = '8px';
-		
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			img.src = e.target.result;
-		};
-		reader.readAsDataURL(file);
+		img.src = imageUrl;
+		img.className = 'message-image';
+		img.alt = 'Uploaded image';
+		img.onclick = () => window.open(imageUrl, '_blank');
 
-		messageContent.appendChild(img);
+		contentDiv.appendChild(img);
 		messageDiv.appendChild(avatar);
-		messageDiv.appendChild(messageContent);
+		messageDiv.appendChild(contentDiv);
 
-		chatMessages.appendChild(messageDiv);
+		messagesWrapper.appendChild(messageDiv);
 		scrollToBottom();
+	};
+
+	// Create suggested actions UI
+	const createSuggestedActions = (action) => {
+		if (!action || !action.action) return null;
+
+		const actionsDiv = document.createElement('div');
+		actionsDiv.className = 'suggested-actions';
+
+		const title = document.createElement('div');
+		title.className = 'suggested-actions-title';
+		title.textContent = 'Suggested Action';
+
+		const buttonsDiv = document.createElement('div');
+		buttonsDiv.className = 'suggested-actions-buttons';
+
+		const executeBtn = document.createElement('button');
+		executeBtn.className = 'action-btn primary';
+		executeBtn.textContent = `Execute: ${action.action}`;
+		executeBtn.onclick = () => executeAction(action);
+
+		buttonsDiv.appendChild(executeBtn);
+		actionsDiv.appendChild(title);
+		actionsDiv.appendChild(buttonsDiv);
+
+		return actionsDiv;
+	};
+
+	// Execute action
+	const executeAction = async (action) => {
+		console.log('Executing action:', action);
+		showNotification('Executing action...', 'info');
+
+		try {
+			// Call the appropriate handler function based on action type
+			if (action.action === 'create_document') {
+				await handleCreateDocument(action);
+			} else if (action.action === 'dynamic_search') {
+				await handleDynamicSearch(action);
+			} else if (action.action === 'get_document_details' || action.action === 'get_customer_details') {
+				await handleGetDocumentDetails(action);
+			} else if (action.action === 'find_duplicates' || action.action === 'find_duplicate_customers') {
+				await handleFindDuplicates(action);
+			} else if (action.action === 'count_documents' || action.action === 'count_customers') {
+				await handleCountDocuments(action);
+			} else if (action.action === 'get_customers_by_order_count') {
+				await handleGetCustomersByOrderCount(action);
+			} else if (action.action === 'get_customers_by_order_value') {
+				await handleGetCustomersByOrderValue(action);
+			} else if (action.action === 'get_orders_by_customer_group') {
+				await handleGetOrdersByCustomerGroup(action);
+			} else if (action.action === 'get_orders_by_territory') {
+				await handleGetOrdersByTerritory(action);
+			} else if (action.action === 'get_orders_by_item') {
+				await handleGetOrdersByItem(action);
+			} else if (action.action === 'get_orders_with_most_items') {
+				await handleGetOrdersWithMostItems(action);
+			} else if (action.action === 'get_orders_by_item_group') {
+				await handleGetOrdersByItemGroup(action);
+			} else if (action.action === 'get_total_quantity_sold') {
+				await handleGetTotalQuantitySold(action);
+			} else if (action.action === 'get_most_sold_items') {
+				await handleGetMostSoldItems(action);
+			} else if (action.action === 'search_customer') {
+				await handleSearchCustomer(action);
+			} else {
+				throw new Error(`Unknown action type: ${action.action}`);
+			}
+		} catch (error) {
+			console.error('Action execution error:', error);
+			showNotification('Failed to execute action', 'error');
+			addMessage('ai', `❌ Error: ${error.message || 'Failed to execute action'}`);
+		}
+	};
+
+	// Format action result
+	const formatActionResult = (data) => {
+		if (data.results && Array.isArray(data.results)) {
+			let html = '<div>';
+
+			if (data.message) {
+				html += `<p><strong>${escapeHtml(data.message)}</strong></p>`;
+			}
+
+			if (data.results.length > 0) {
+				html += '<ul>';
+				data.results.slice(0, 10).forEach(item => {
+					const name = item.name || item.customer_name || item.title || 'Unknown';
+					html += `<li>${escapeHtml(name)}</li>`;
+				});
+				html += '</ul>';
+
+				if (data.results.length > 10) {
+					html += `<p><em>... and ${data.results.length - 10} more</em></p>`;
+				}
+			} else {
+				html += '<p>No results found.</p>';
+			}
+
+			html += '</div>';
+			return html;
+		}
+
+		if (data.data) {
+			let html = '<div>';
+			html += `<p><strong>${escapeHtml(data.message || 'Results:')}</strong></p>`;
+			html += `<pre><code>${escapeHtml(JSON.stringify(data.data, null, 2))}</code></pre>`;
+			html += '</div>';
+			return html;
+		}
+
+		return `<p>${escapeHtml(data.message || 'Action completed')}</p>`;
 	};
 
 	// Create suggested action element
@@ -826,14 +1355,81 @@
 			const title = document.createElement('h4');
 			title.textContent = `Suggested: Create ${action.doctype}`;
 
-			const fieldsText = document.createElement('p');
-			fieldsText.style.margin = '0';
-			fieldsText.style.fontSize = '13px';
-			fieldsText.style.color = '#4a5568';
-			fieldsText.textContent = `Fields: ${Object.keys(action.fields || {}).join(', ')}`;
+			// Create a container for the extracted information
+			const infoContainer = document.createElement('div');
+			infoContainer.style.margin = '12px 0';
+			infoContainer.style.padding = '12px';
+			infoContainer.style.background = '#f7fafc';
+			infoContainer.style.borderRadius = '8px';
+			infoContainer.style.border = '1px solid #e2e8f0';
+
+			// Add a label
+			const infoLabel = document.createElement('div');
+			infoLabel.style.fontSize = '12px';
+			infoLabel.style.fontWeight = '600';
+			infoLabel.style.color = '#4a5568';
+			infoLabel.style.marginBottom = '8px';
+			infoLabel.textContent = '📋 Extracted Information:';
+			infoContainer.appendChild(infoLabel);
+
+			// Display fields with their values in a nice format
+			const fields = action.fields || {};
+			const fieldsList = document.createElement('div');
+			fieldsList.style.display = 'flex';
+			fieldsList.style.flexDirection = 'column';
+			fieldsList.style.gap = '6px';
+
+			// Field label mapping for better display
+			const fieldLabels = {
+				'customer_name': '👤 Customer Name',
+				'supplier_name': '👤 Supplier Name',
+				'mobile_no': '📱 Mobile Number',
+				'phone': '📱 Phone',
+				'email_id': '📧 Email',
+				'email': '📧 Email',
+				'territory': '🌍 Territory',
+				'customer_group': '👥 Customer Group',
+				'address_line1': '📍 Address',
+				'city': '🏙️ City',
+				'state': '🗺️ State',
+				'country': '🌎 Country',
+				'pincode': '📮 Pincode'
+			};
+
+			// Display each field with its value
+			Object.keys(fields).forEach(fieldKey => {
+				const fieldValue = fields[fieldKey];
+				if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
+					const fieldRow = document.createElement('div');
+					fieldRow.style.display = 'flex';
+					fieldRow.style.justifyContent = 'space-between';
+					fieldRow.style.alignItems = 'center';
+					fieldRow.style.padding = '6px 8px';
+					fieldRow.style.background = 'white';
+					fieldRow.style.borderRadius = '4px';
+					fieldRow.style.fontSize = '13px';
+
+					const fieldLabel = document.createElement('span');
+					fieldLabel.style.color = '#718096';
+					fieldLabel.style.fontWeight = '500';
+					fieldLabel.textContent = fieldLabels[fieldKey] || fieldKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) + ':';
+
+					const fieldValueSpan = document.createElement('span');
+					fieldValueSpan.style.color = '#2d3748';
+					fieldValueSpan.style.fontWeight = '600';
+					fieldValueSpan.textContent = String(fieldValue);
+
+					fieldRow.appendChild(fieldLabel);
+					fieldRow.appendChild(fieldValueSpan);
+					fieldsList.appendChild(fieldRow);
+				}
+			});
+
+			infoContainer.appendChild(fieldsList);
 
 			const buttonContainer = document.createElement('div');
 			buttonContainer.className = 'suggested-action-buttons';
+			buttonContainer.style.marginTop = '12px';
 
 			const createBtn = document.createElement('button');
 			createBtn.className = 'btn-action btn-action-primary';
@@ -849,9 +1445,9 @@
 			buttonContainer.appendChild(cancelBtn);
 
 			actionDiv.appendChild(title);
-			actionDiv.appendChild(fieldsText);
+			actionDiv.appendChild(infoContainer);
 			actionDiv.appendChild(buttonContainer);
-			
+
 		} else if (action.action === 'search_customer') {
 			const title = document.createElement('h4');
 			title.textContent = `Search for: ${action.query}`;
@@ -874,7 +1470,7 @@
 
 			actionDiv.appendChild(title);
 			actionDiv.appendChild(buttonContainer);
-			
+
 		} else if (action.action === 'get_customer_details') {
 			const title = document.createElement('h4');
 			title.textContent = `Get details: ${action.customer_name}`;
@@ -905,7 +1501,7 @@
 	// Handle create document
 	const handleCreateDocument = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 
 			const formData = new FormData();
 			formData.append('doctype', action.doctype);
@@ -927,20 +1523,20 @@
 
 			const responseData = await response.json();
 			console.log('Create document - Raw response:', responseData);
-			
+
 			// Frappe wraps the response in a 'message' key
 			const result = responseData.message || responseData;
 			console.log('Create document - Parsed result:', result);
-			
-			hideTypingIndicator();
+
+			hideTypingIndicator(typingId);
 
 			if (result && result.status === 'success') {
 				// Build document link from name and doctype
 				const doctype = result.doctype || action.doctype || 'Customer';
 				const docName = result.name || (result.document && result.document.name);
-				
+
 				console.log('Create document - Extracted info:', { doctype, docName, result });
-				
+
 				let linkText = '';
 				if (docName) {
 					// Construct ERPNext document URL
@@ -949,34 +1545,34 @@
 				} else {
 					linkText = `\n\n📄 Document created successfully`;
 				}
-				
+
 				const successMessage = result.message || `✅ ${doctype} created successfully`;
-				addMessage(`${successMessage}${linkText}`, 'ai');
-				
+				addMessage('ai', `${successMessage}${linkText}`);
+
 				// Show success notification
 				console.log('✅ Document created successfully:', { doctype, name: docName, result });
 			} else {
 				// Handle error response
 				const errorMessage = result?.message || result?.error || 'Unknown error occurred';
 				console.error('❌ Create document failed:', result);
-				addMessage(`❌ Error: ${errorMessage}`, 'ai');
+				addMessage('ai', `❌ Error: ${errorMessage}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 			console.error('Create document error:', error);
 			console.error('Error stack:', error.stack);
-			
+
 			// Show more detailed error message
 			const errorMsg = error.message || 'Failed to create document. Please try again.';
-			addMessage(`❌ Error: ${errorMsg}`, 'ai');
-			showError(errorMsg);
+			addMessage('ai', `❌ Error: ${errorMsg}`);
+			showNotification(errorMsg, 'error');
 		}
 	};
 
 	// Auto-execute action
 	// Store the original user question for context
 	let lastUserQuestion = '';
-	
+
 	const autoExecuteAction = (action, originalQuestion = '') => {
 		console.log('Auto-executing:', action);
 		console.log('Original question:', originalQuestion);
@@ -986,7 +1582,7 @@
 			lastUserQuestion = originalQuestion;
 		}
 		const doctype = action.doctype || 'Customer'; // Default to Customer for backward compatibility
-		
+
 		if (action.action === 'dynamic_search') {
 			handleDynamicSearch(action);
 		} else if (action.action === 'get_document_details' || action.action === 'get_customer_details') {
@@ -1022,9 +1618,9 @@
 	// Handle find duplicates
 	const handleFindDuplicates = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const doctype = action?.doctype || 'Customer';
-			
+
 			const formData = new FormData();
 			formData.append('doctype', doctype);
 
@@ -1043,16 +1639,16 @@
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
 
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				displayDuplicateResults(result);
 			} else {
-				addMessage(`⚠️ Failed to find duplicates: ${result.message}`, 'ai');
+				addMessage('ai', `⚠️ Failed to find duplicates: ${result.message}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error finding duplicates. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error finding duplicates. Please try again.');
 			console.error('Find duplicates error:', error);
 		}
 	};
@@ -1076,13 +1672,13 @@
 			result.duplicates.forEach((dup, index) => {
 				message += `<div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
 				message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 8px;">"${escapeHtml(dup.customer_name)}" appears ${dup.count} times:</div>`;
-				
+
 				dup.customers.forEach((customer, idx) => {
 					const customerUrl = `${window.location.origin}/app/customer/${encodeURIComponent(customer.name)}`;
 					const details = [];
 					if (customer.mobile_no) details.push(`Phone: ${escapeHtml(customer.mobile_no)}`);
 					if (customer.email_id) details.push(`Email: ${escapeHtml(customer.email_id)}`);
-					
+
 					message += `<div style="margin-bottom: 8px; padding-left: 12px;">`;
 					message += `<span style="color: #4b5563;">${idx + 1}. ${escapeHtml(customer.name)}</span>`;
 					if (details.length > 0) {
@@ -1096,15 +1692,15 @@
 			message += '</div>';
 		}
 
-		addMessage(message, 'ai');
+		addMessage('ai', message);
 	};
 
 	// Handle count documents
 	const handleCountDocuments = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const doctype = action?.doctype || 'Customer';
-			
+
 			const formData = new FormData();
 			formData.append('doctype', doctype);
 			if (action?.filters) {
@@ -1125,7 +1721,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				// Store document names in context for follow-up questions
@@ -1140,11 +1736,11 @@
 				}
 				displayCustomerCount(result, doctype);
 			} else {
-				addMessage(`❌ ${result.message}`, 'ai');
+				addMessage('ai', `❌ ${result.message}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			showError(`Failed to count ${doctype.toLowerCase()}s. Please try again.`);
+			hideTypingIndicator(typingId);
+			showNotification(`Failed to count ${doctype.toLowerCase()}s. Please try again.`, 'error');
 			console.error('Count error:', error);
 		}
 	};
@@ -1185,13 +1781,13 @@
 			message += `</ul></div>`;
 		}
 
-		addMessage(message, 'ai');
+		addMessage('ai', message);
 	};
 
 	// Handle dynamic search with filters
 	const handleDynamicSearch = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const doctype = action?.doctype || 'Customer';
 
 			const formData = new FormData();
@@ -1217,16 +1813,16 @@
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
 
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				displayDynamicSearchResults(result, doctype);
 			} else {
-				addMessage(`⚠️ Search failed: ${result.message}`, 'ai');
+				addMessage('ai', `⚠️ Search failed: ${result.message}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Search error. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Search error. Please try again.');
 			console.error('Dynamic search error:', error);
 		}
 	};
@@ -1242,7 +1838,7 @@
 		let detectedDoctype = doctype;
 		let resultsKey = null;
 		let results = [];
-		
+
 		// Find the results array (could be customers, items, etc.)
 		for (const key in result) {
 			if (Array.isArray(result[key]) && key !== 'filters_applied') {
@@ -1255,12 +1851,12 @@
 				break;
 			}
 		}
-		
+
 		// Fallback to count if no array found
 		if (!results.length && result.count) {
 			results = result.results || [];
 		}
-		
+
 		const doctypeLabel = detectedDoctype ? detectedDoctype.toLowerCase() + (result.count !== 1 ? 's' : '') : 'items';
 		const doctypeSingular = detectedDoctype ? detectedDoctype.toLowerCase() : 'item';
 
@@ -1281,7 +1877,7 @@
 				// Determine name field based on doctype
 				let itemName = '';
 				let itemUrl = '';
-				
+
 				if (detectedDoctype === 'Customer') {
 					itemName = item.customer_name || item.name;
 					itemUrl = `${window.location.origin}/app/customer/${encodeURIComponent(item.name)}`;
@@ -1295,15 +1891,15 @@
 					itemName = item.name || item[`${detectedDoctype.toLowerCase()}_name`] || 'Unknown';
 					itemUrl = `${window.location.origin}/app/${detectedDoctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(item.name)}`;
 				}
-				
+
 				// Store document name for context
 				if (item.name) {
 					documentNames.push(item.name);
 				}
-				
+
 				message += `<div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
 				message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(itemName)}</div>`;
-				
+
 				// Build info line with available details (doctype-specific)
 				const details = [];
 				if (detectedDoctype === 'Customer') {
@@ -1338,16 +1934,16 @@
 						}
 					});
 				}
-				
+
 				if (details.length > 0) {
 					message += `<div style="font-size: 13px; margin-bottom: 8px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 				}
-				
+
 				message += `<a href="${itemUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${detectedDoctype || 'Item'} →</a>`;
 				message += `</div>`;
 			});
 			message += '</div>';
-			
+
 			// Store document names in context for follow-up questions
 			if (documentNames.length > 0) {
 				window.lastQueryContext = {
@@ -1356,7 +1952,7 @@
 					document_names: documentNames,
 					first_result: results.length === 1 ? results[0] : null
 				};
-				
+
 				// Add explicit text for AI to parse (hidden visually but in message text)
 				// This helps the AI extract document names from the conversation
 				if (documentNames.length === 1) {
@@ -1369,15 +1965,15 @@
 			message = `<p>I couldn't find any ${doctypeLabel} matching your search criteria.</p><p style="margin-top: 8px; color: #6b7280;">💡 Try adjusting your search terms or filters.</p>`;
 		}
 
-		addMessage(message, 'ai');
+		addMessage('ai', message);
 	};
 
 	// Handle get customers by order count
 	const handleGetCustomersByOrderCount = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const limit = action?.limit || 10;
-			
+
 			const formData = new FormData();
 			formData.append('limit', limit);
 			if (action?.order_by) {
@@ -1398,7 +1994,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success' && result.results) {
 				let message = `<p><strong>Top ${result.count} customers by order count:</strong></p><div style="margin-top: 12px;">`;
@@ -1417,13 +2013,13 @@
 					message += `</div>`;
 				});
 				message += '</div>';
-				addMessage(message, 'ai');
+				addMessage('ai', message);
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get customers by order count'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get customers by order count'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching customers by order count. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching customers by order count. Please try again.', 'ai');
 			console.error('Get customers by order count error:', error);
 		}
 	};
@@ -1431,9 +2027,9 @@
 	// Handle get customers by order value
 	const handleGetCustomersByOrderValue = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const limit = action?.limit || 10;
-			
+
 			const formData = new FormData();
 			formData.append('limit', limit);
 			if (action?.order_by) {
@@ -1454,7 +2050,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success' && result.results) {
 				let message = `<p><strong>Top ${result.count} customers by order value:</strong></p><div style="margin-top: 12px;">`;
@@ -1476,13 +2072,13 @@
 					message += `</div>`;
 				});
 				message += '</div>';
-				addMessage(message, 'ai');
+				addMessage('ai', message);
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get customers by order value'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get customers by order value'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching customers by order value. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching customers by order value. Please try again.', 'ai');
 			console.error('Get customers by order value error:', error);
 		}
 	};
@@ -1490,12 +2086,12 @@
 	// Handle get orders by customer group
 	const handleGetOrdersByCustomerGroup = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const customer_group = action?.customer_group;
-			
+
 			if (!customer_group) {
-				hideTypingIndicator();
-				addMessage('❌ Customer group is required', 'ai');
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Customer group is required', 'ai');
 				return;
 			}
 
@@ -1516,17 +2112,17 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				// Use the same display function as dynamic search
 				displayDynamicSearchResults(result, 'Sales Order');
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get orders by customer group'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get orders by customer group'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching orders by customer group. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching orders by customer group. Please try again.', 'ai');
 			console.error('Get orders by customer group error:', error);
 		}
 	};
@@ -1534,12 +2130,12 @@
 	// Handle get orders by territory
 	const handleGetOrdersByTerritory = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const territory = action?.territory;
-			
+
 			if (!territory) {
-				hideTypingIndicator();
-				addMessage('❌ Territory is required', 'ai');
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Territory is required', 'ai');
 				return;
 			}
 
@@ -1560,17 +2156,17 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				// Use the same display function as dynamic search
 				displayDynamicSearchResults(result, 'Sales Order');
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get orders by territory'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get orders by territory'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching orders by territory. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching orders by territory. Please try again.', 'ai');
 			console.error('Get orders by territory error:', error);
 		}
 	};
@@ -1578,12 +2174,12 @@
 	// Handle get orders by item
 	const handleGetOrdersByItem = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const item_code = action?.item_code;
-			
+
 			if (!item_code) {
-				hideTypingIndicator();
-				addMessage('❌ Item code is required', 'ai');
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Item code is required', 'ai');
 				return;
 			}
 
@@ -1604,17 +2200,17 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				// Use the same display function as dynamic search
 				displayDynamicSearchResults(result, 'Sales Order');
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get orders by item'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get orders by item'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching orders by item. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching orders by item. Please try again.', 'ai');
 			console.error('Get orders by item error:', error);
 		}
 	};
@@ -1622,9 +2218,9 @@
 	// Handle get orders with most items
 	const handleGetOrdersWithMostItems = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const limit = action?.limit || 10;
-			
+
 			const formData = new FormData();
 			formData.append('limit', limit);
 			if (action?.order_by) {
@@ -1645,7 +2241,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success' && result.sales_orders) {
 				let message = `<p><strong>Top ${result.count} sales orders with most items:</strong></p><div style="margin-top: 12px;">`;
@@ -1668,13 +2264,13 @@
 					message += `</div>`;
 				});
 				message += '</div>';
-				addMessage(message, 'ai');
+				addMessage('ai', message);
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get orders with most items'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get orders with most items'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching orders with most items. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching orders with most items. Please try again.', 'ai');
 			console.error('Get orders with most items error:', error);
 		}
 	};
@@ -1682,12 +2278,12 @@
 	// Handle get orders by item group
 	const handleGetOrdersByItemGroup = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const item_group = action?.item_group;
-			
+
 			if (!item_group) {
-				hideTypingIndicator();
-				addMessage('❌ Item group is required', 'ai');
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Item group is required', 'ai');
 				return;
 			}
 
@@ -1708,17 +2304,17 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				// Use the same display function as dynamic search
 				displayDynamicSearchResults(result, 'Sales Order');
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get orders by item group'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get orders by item group'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching orders by item group. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching orders by item group. Please try again.', 'ai');
 			console.error('Get orders by item group error:', error);
 		}
 	};
@@ -1726,12 +2322,12 @@
 	// Handle get total quantity sold
 	const handleGetTotalQuantitySold = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const item_code = action?.item_code;
-			
+
 			if (!item_code) {
-				hideTypingIndicator();
-				addMessage('❌ Item code is required', 'ai');
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Item code is required', 'ai');
 				return;
 			}
 
@@ -1758,7 +2354,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				let message = `<p><strong>Total quantity sold for ${escapeHtml(result.item_name || result.item_code)}:</strong></p>`;
@@ -1783,13 +2379,13 @@
 					message += `<div style="font-size: 13px; line-height: 1.5; margin-top: 8px;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 				}
 				message += `</div>`;
-				addMessage(message, 'ai');
+				addMessage('ai', message);
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get total quantity sold'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get total quantity sold'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching total quantity sold. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching total quantity sold. Please try again.', 'ai');
 			console.error('Get total quantity sold error:', error);
 		}
 	};
@@ -1797,9 +2393,9 @@
 	// Handle get most sold items
 	const handleGetMostSoldItems = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const limit = action?.limit || 10;
-			
+
 			const formData = new FormData();
 			formData.append('limit', limit);
 			if (action?.order_by) {
@@ -1826,7 +2422,7 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success' && result.results) {
 				let message = `<p><strong>Top ${result.count} most sold items:</strong></p><div style="margin-top: 12px;">`;
@@ -1848,13 +2444,13 @@
 					message += `</div>`;
 				});
 				message += '</div>';
-				addMessage(message, 'ai');
+				addMessage('ai', message);
 			} else {
-				addMessage(`❌ ${result.message || 'Failed to get most sold items'}`, 'ai');
+				addMessage('ai', `❌ ${result.message || 'Failed to get most sold items'}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			addMessage('❌ Error fetching most sold items. Please try again.', 'ai');
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching most sold items. Please try again.', 'ai');
 			console.error('Get most sold items error:', error);
 		}
 	};
@@ -1862,7 +2458,7 @@
 	// Handle search customer
 	const handleSearchCustomer = async (action) => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 
 			const formData = new FormData();
 			formData.append('query', action.query);
@@ -1882,16 +2478,16 @@
 
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 
 			if (result.status === 'success') {
 				displayCustomerSearchResults(result);
 			} else {
-				addMessage(`❌ Search failed: ${result.message}`, 'ai');
+				addMessage('ai', `❌ Search failed: ${result.message}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			showError('Failed to search customers. Please try again.');
+			hideTypingIndicator(typingId);
+			showNotification('Failed to search customers. Please try again.', 'error');
 			console.error('Search error:', error);
 		}
 	};
@@ -1909,37 +2505,37 @@
 		} else {
 			message += `<p>I found <strong>${result.count} customers</strong>:</p>`;
 		}
-		
+
 		message += '<div style="margin-top: 12px;">';
 		result.customers.forEach((customer, index) => {
 			const customerUrl = `${window.location.origin}/app/customer/${encodeURIComponent(customer.name)}`;
-			
+
 			message += `<div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;">`;
 			message += `<div style="font-weight: 600; font-size: 15px; color: #1f2937; margin-bottom: 6px;">${escapeHtml(customer.customer_name)}</div>`;
-			
+
 			const details = [];
 			if (customer.mobile_no) details.push(`<span style="color: #4b5563;">Phone: ${escapeHtml(customer.mobile_no)}</span>`);
 			if (customer.email_id) details.push(`<span style="color: #4b5563;">Email: ${escapeHtml(customer.email_id)}</span>`);
 			if (customer.territory) details.push(`<span style="color: #4b5563;">Territory: ${escapeHtml(customer.territory)}</span>`);
 			if (customer.default_currency) details.push(`<span style="color: #4b5563;">Currency: ${escapeHtml(customer.default_currency)}</span>`);
-			
+
 			if (details.length > 0) {
 				message += `<div style="font-size: 13px; margin-bottom: 8px; line-height: 1.5;">${details.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 			}
-			
+
 			message += `<a href="${customerUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Customer →</a>`;
 			message += `</div>`;
 		});
 		message += '</div>';
 
-		addMessage(message, 'ai');
+		addMessage('ai', message);
 	};
 
 	// Answer user's question based on document data using AI
 	const answerQuestionFromDocument = async (document, doctype, question) => {
 		try {
-			showTypingIndicator();
-			
+			const typingId = showTypingIndicator();
+
 			// Create a clean summary of the document for the AI
 			const documentSummary = {
 				doctype: doctype,
@@ -1947,18 +2543,18 @@
 				// Include all relevant fields, but format nicely
 				data: document
 			};
-			
+
 			// Create a focused prompt for the AI
 			// Format the document data more intelligently, especially for nested structures like uoms
 			let formattedData = '';
-			
+
 			// Helper to extract text from HTML description
 			const extractTextFromHTML = (html) => {
 				if (!html) return 'N/A';
 				// Remove HTML tags and decode entities
 				return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
 			};
-			
+
 			if (doctype === 'Item') {
 				// Format Item data nicely for better AI understanding
 				const itemName = document.item_name || document.item_code || document.name;
@@ -1966,14 +2562,14 @@
 				const uomsInfo = document.uoms && Array.isArray(document.uoms) && document.uoms.length > 0
 					? document.uoms.map(uom => `- ${uom.uom}: conversion_factor = ${uom.conversion_factor}`).join('\n')
 					: 'None';
-				
+
 				// Include stock-related quantities if available
 				const stockInfo = document.stock && Array.isArray(document.stock) && document.stock.length > 0
-					? document.stock.map(s => 
+					? document.stock.map(s =>
 						`  Warehouse: ${s.warehouse || 'N/A'}, Actual Qty: ${s.actual_qty || 0}, Projected Qty: ${s.projected_qty || 0}`
-					  ).join('\n')
+					).join('\n')
 					: 'No stock information available';
-				
+
 				formattedData = `Item Information:
 - Item Name/Code: ${itemName}
 - Description: ${description}
@@ -1995,7 +2591,7 @@ ${JSON.stringify(documentSummary, null, 2)}`;
 				formattedData = `${doctype} Document Data:
 ${JSON.stringify(documentSummary, null, 2)}`;
 			}
-			
+
 			const prompt = `You have the complete ${doctype} document data. Answer the user's question by extracting the specific information requested from the data below. Be direct, concise, and accurate. Only provide what was asked for.
 
 ${formattedData}
@@ -2013,10 +2609,10 @@ Instructions:
 - Format your answer clearly and concisely
 - IMPORTANT: If the data shows a value (even if it's 0), provide that value directly. Don't say you can't find it.
 - CRITICAL: Use plain text format. DO NOT use markdown formatting like **bold**, *italic*, or special characters like * or **. Just provide clean, readable text.`;
-			
+
 			const formData = new FormData();
 			formData.append('message', prompt);
-			
+
 			const response = await fetch('/api/method/exim_backend.api.ai_chat.process_chat', {
 				method: 'POST',
 				headers: {
@@ -2024,16 +2620,16 @@ Instructions:
 				},
 				body: formData
 			});
-			
+
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
-			
+
 			const responseData = await response.json();
 			const result = responseData.message || responseData;
-			
-			hideTypingIndicator();
-			
+
+			hideTypingIndicator(typingId);
+
 			// The process_chat API returns: {status: "success", message: "AI response", ...}
 			if (result && (result.status === 'success' || result.message)) {
 				const aiAnswer = result.message || 'No answer provided';
@@ -2041,7 +2637,7 @@ Instructions:
 				let cleanAnswer = aiAnswer.replace(/```json[\s\S]*?```/g, '').replace(/```[\s\S]*?```/g, '').trim();
 				// Remove any remaining JSON structure if it's just the action
 				cleanAnswer = cleanAnswer.replace(/^\s*\{[\s\S]*"action"[\s\S]*\}\s*$/g, '').trim();
-				
+
 				if (cleanAnswer && cleanAnswer.length > 0) {
 					// Check if answer contains markdown formatting and convert it
 					const hasMarkdown = /[\*\-\+]\s+|\*\*|__|`|```/.test(cleanAnswer);
@@ -2050,7 +2646,7 @@ Instructions:
 						addMessage(markdownToHtml(cleanAnswer), 'ai', null, result.token_usage);
 					} else {
 						// Plain text - wrap in paragraph
-						addMessage(`<p class="ai-paragraph">${escapeHtml(cleanAnswer)}</p>`, 'ai', null, result.token_usage);
+						addMessage('ai', `<p class="ai-paragraph">${escapeHtml(cleanAnswer)}</p>`, 'ai', null, result.token_usage);
 					}
 				} else {
 					// If AI didn't provide a good answer, fallback to generic display
@@ -2075,7 +2671,7 @@ Instructions:
 				}
 			}
 		} catch (error) {
-			hideTypingIndicator();
+			hideTypingIndicator(typingId);
 			console.error('Error getting AI answer from document:', error);
 			// Fallback to generic display on error
 			if (doctype === 'Item') {
@@ -2091,7 +2687,7 @@ Instructions:
 	// Handle get customer details
 	const handleGetDocumentDetails = async (action, originalQuestion = '') => {
 		try {
-			showTypingIndicator();
+			const typingId = showTypingIndicator();
 			const doctype = action?.doctype || 'Customer';
 			const name = action?.name || action?.customer_name; // Support both formats
 
@@ -2119,9 +2715,9 @@ Instructions:
 
 			const responseData = await response.json();
 			console.log('Raw API responseData:', responseData);
-			
+
 			const result = responseData.message || responseData;
-			
+
 			// Debug logging - ALWAYS log this
 			console.log('═══════════════════════════════════════════════════════');
 			console.log('📋 GET DOCUMENT DETAILS API RESPONSE');
@@ -2136,13 +2732,13 @@ Instructions:
 			console.log('🔍 Type of result.sales_order:', typeof result?.sales_order);
 			console.log('🔍 Has sales_order key:', 'sales_order' in (result || {}));
 			console.log('═══════════════════════════════════════════════════════');
-			
-			hideTypingIndicator();
+
+			hideTypingIndicator(typingId);
 
 			// Validate result exists
 			if (!result) {
 				console.error('❌ CRITICAL: result is null/undefined!');
-				addMessage(`❌ Error: No response received from server.`, 'ai');
+				addMessage('ai', `❌ Error: No response received from server.`);
 				return;
 			}
 
@@ -2151,10 +2747,10 @@ Instructions:
 				// Support doctype-specific and generic document formats
 				// Try different possible keys based on doctype
 				let document = null;
-				
+
 				console.log('🔍 Extracting document for doctype:', doctype);
 				console.log('🔍 Result keys:', Object.keys(result));
-				
+
 				if (doctype === 'Customer') {
 					document = result.customer || result.document;
 					console.log('🔍 Customer document found:', !!result.customer);
@@ -2189,46 +2785,46 @@ Instructions:
 					document = result[doctypeKeyUnderscore] || result[doctypeKeySpace] || result.document;
 					console.log('🔍 Generic doctype - trying:', doctypeKeyUnderscore, doctypeKeySpace);
 				}
-				
+
 				console.log('✅ Extracted document:', document);
 				console.log('✅ Document type:', typeof document);
 				console.log('✅ Document name:', document?.name);
-				
+
 				// Check if document exists and is a valid object
 				if (!document || typeof document !== 'object' || Array.isArray(document)) {
 					console.error('Document is invalid. Full result:', result);
 					const errorDetails = result.message || 'Document data is missing or invalid';
-					addMessage(`❌ ${errorDetails}`, 'ai');
+					addMessage('ai', `❌ ${errorDetails}`);
 					return;
 				}
-				
+
 				// Validate document has at least a name or identifier
 				if (!document.name && !document.item_code && !document[`${doctype.toLowerCase()}_name`]) {
 					console.error('Document missing identifier. Document:', document);
-					addMessage(`❌ Document data is incomplete. Missing identifier.`, 'ai');
+					addMessage('ai', `❌ Document data is incomplete. Missing identifier.`);
 					return;
 				}
-				
+
 				// Final safety check before calling display functions
 				if (!document || typeof document !== 'object' || Array.isArray(document)) {
-					console.error('Final validation failed - document is invalid before display:', { 
-						document, 
-						doctype, 
+					console.error('Final validation failed - document is invalid before display:', {
+						document,
+						doctype,
 						result,
 						documentType: typeof document,
 						isArray: Array.isArray(document)
 					});
-					addMessage(`❌ Error: Invalid document data received from server. Please check console for details.`, 'ai');
+					addMessage('ai', `❌ Error: Invalid document data received from server. Please check console for details.`);
 					return;
 				}
-				
+
 				// Additional check: ensure document has required properties
 				if (doctype === 'Item' && !document.name && !document.item_code && !document.item_name) {
 					console.error('Item document missing all identifiers:', document);
-					addMessage(`❌ Error: Item document is missing required fields (name, item_code, item_name).`, 'ai');
+					addMessage('ai', `❌ Error: Item document is missing required fields (name, item_code, item_name).`);
 					return;
 				}
-				
+
 				// If original question exists, send document data to AI to answer the specific question
 				// BUT: For "detailed info", "complete info", "details", etc., just display directly without AI formatting
 				if (originalQuestion && originalQuestion.trim()) {
@@ -2236,8 +2832,8 @@ Instructions:
 					console.log('🔍 Checking question for info request:', questionLower);
 					// Comprehensive detection: If asking for complete/detailed/full info, display directly
 					// Check for patterns like "give complete sales order info", "show full details", etc.
-					const isInfoRequest = 
-						questionLower.includes('detailed info') || 
+					const isInfoRequest =
+						questionLower.includes('detailed info') ||
 						questionLower.includes('complete info') ||
 						questionLower.includes('complete sales order info') ||
 						questionLower.includes('complete item info') ||
@@ -2258,12 +2854,12 @@ Instructions:
 						questionLower.match(/show\s+(complete|full|all|detailed)\s+(sales\s+order|item|customer)?\s*details/i) ||
 						(questionLower.includes('info') && (questionLower.includes('complete') || questionLower.includes('full') || questionLower.includes('all'))) ||
 						(questionLower.includes('details') && (questionLower.includes('complete') || questionLower.includes('full') || questionLower.includes('all'))) ||
-						questionLower.includes('details') || 
-						questionLower.includes('show details') || 
+						questionLower.includes('details') ||
+						questionLower.includes('show details') ||
 						questionLower.includes('give details');
-					
+
 					console.log('🔍 Is info request?', isInfoRequest);
-					
+
 					if (isInfoRequest) {
 						console.log('Question asks for complete/detailed info - displaying directly without AI formatting');
 						// Display directly using appropriate function
@@ -2327,18 +2923,18 @@ Instructions:
 						}
 					} catch (displayError) {
 						console.error('Error calling display function:', displayError, { document, doctype });
-						addMessage(`❌ Error displaying document: ${displayError.message || 'Unknown error'}`, 'ai');
+						addMessage('ai', `❌ Error displaying document: ${displayError.message || 'Unknown error'}`);
 					}
 				}
 			} else {
 				// Handle error response
 				const errorMsg = result.message || 'Unknown error occurred';
 				console.error('API returned error status:', result);
-				addMessage(`❌ ${errorMsg}`, 'ai');
+				addMessage('ai', `❌ ${errorMsg}`);
 			}
 		} catch (error) {
-			hideTypingIndicator();
-			showError('Failed to get document details. Please try again.');
+			hideTypingIndicator(typingId);
+			showNotification('Failed to get document details. Please try again.', 'error');
 			console.error('Get details error:', error);
 		}
 	};
@@ -2353,9 +2949,9 @@ Instructions:
 	const displayCustomerDetails = (customer) => {
 		const customerUrl = `${window.location.origin}/app/customer/${encodeURIComponent(customer.name)}`;
 		let message = `<p>Here are the details for <strong>${escapeHtml(customer.customer_name)}</strong>:</p>`;
-		
+
 		message += '<div style="margin-top: 12px;">';
-		
+
 		// Contact Information
 		const contactInfo = [];
 		if (customer.mobile_no) contactInfo.push(`<span style="color: #4b5563;">📱 ${escapeHtml(customer.mobile_no)}</span>`);
@@ -2363,7 +2959,7 @@ Instructions:
 		if (contactInfo.length > 0) {
 			message += `<div style="margin-bottom: 12px; font-size: 14px; line-height: 1.6;">${contactInfo.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 		}
-		
+
 		// Business Information
 		const businessInfo = [];
 		if (customer.customer_type) businessInfo.push(`<span style="color: #4b5563;">Type: ${escapeHtml(customer.customer_type)}</span>`);
@@ -2372,7 +2968,7 @@ Instructions:
 		if (businessInfo.length > 0) {
 			message += `<div style="margin-bottom: 12px; font-size: 14px; line-height: 1.6;">${businessInfo.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 		}
-		
+
 		// Financial Information
 		const financialInfo = [];
 		if (customer.default_currency) financialInfo.push(`<span style="color: #4b5563;">Currency: ${escapeHtml(customer.default_currency)}</span>`);
@@ -2381,7 +2977,7 @@ Instructions:
 		if (financialInfo.length > 0) {
 			message += `<div style="margin-bottom: 12px; font-size: 14px; line-height: 1.6;">${financialInfo.join(' <span style="color: #9ca3af;">•</span> ')}</div>`;
 		}
-		
+
 		// Primary Contact
 		if (customer.customer_primary_contact) {
 			message += `<div style="margin-bottom: 12px; font-size: 14px;"><span style="color: #4b5563;">Primary Contact: ${escapeHtml(customer.customer_primary_contact)}</span></div>`;
@@ -2396,7 +2992,7 @@ Instructions:
 			if (customer.address.state) addressParts.push(escapeHtml(customer.address.state));
 			if (customer.address.country) addressParts.push(escapeHtml(customer.address.country));
 			if (customer.address.pincode) addressParts.push(escapeHtml(customer.address.pincode));
-			
+
 			if (addressParts.length > 0) {
 				message += `<div style="margin-bottom: 12px; font-size: 14px;"><span style="color: #4b5563;">📍 Address: ${addressParts.join(', ')}</span></div>`;
 			}
@@ -2418,7 +3014,7 @@ Instructions:
 		message += `<div style="margin-top: 12px;"><a href="${customerUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Customer →</a></div>`;
 		message += '</div>';
 
-		addMessage(message, 'ai');
+		addMessage('ai', message);
 	};
 
 	// Display Sales Order details
@@ -2426,19 +3022,19 @@ Instructions:
 		try {
 			if (!salesOrder || typeof salesOrder !== 'object') {
 				console.error('displaySalesOrderDetails: salesOrder is invalid', salesOrder);
-				addMessage(`❌ Error: Sales Order data is missing or invalid.`, 'ai');
+				addMessage('ai', `❌ Error: Sales Order data is missing or invalid.`);
 				return;
 			}
 
 			const soName = salesOrder.name || 'Unknown';
 			const soUrl = `${window.location.origin}/app/sales-order/${encodeURIComponent(soName)}`;
-			
+
 			let message = `<div class="ai-document-details">`;
 			message += `<p class="ai-paragraph"><strong>Sales Order: ${escapeHtml(soName)}</strong></p>`;
-			
+
 			// Key Information Section
 			message += `<div style="margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px; border-left: 3px solid #3b82f6;">`;
-			
+
 			const keyInfo = [];
 			if (salesOrder.customer_name) keyInfo.push(`<span style="color: #374151;"><strong>Customer:</strong> ${escapeHtml(salesOrder.customer_name)}</span>`);
 			if (salesOrder.transaction_date) keyInfo.push(`<span style="color: #374151;"><strong>Date:</strong> ${escapeHtml(salesOrder.transaction_date)}</span>`);
@@ -2449,16 +3045,16 @@ Instructions:
 			}
 			if (salesOrder.company) keyInfo.push(`<span style="color: #374151;"><strong>Company:</strong> ${escapeHtml(salesOrder.company)}</span>`);
 			if (salesOrder.grand_total !== undefined) keyInfo.push(`<span style="color: #374151;"><strong>Grand Total:</strong> ${escapeHtml(salesOrder.currency || '')} ${escapeHtml(salesOrder.grand_total)}</span>`);
-			
+
 			message += `<div style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 14px; line-height: 1.6;">${keyInfo.join('')}</div>`;
 			message += `</div>`;
-			
+
 			// Items Section
 			if (salesOrder.items && Array.isArray(salesOrder.items) && salesOrder.items.length > 0) {
 				message += `<div style="margin: 16px 0;">`;
 				message += `<p class="ai-paragraph" style="font-weight: 600; color: #111827; margin-bottom: 12px;">Items (${salesOrder.items.length}):</p>`;
 				message += `<div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;">`;
-				
+
 				salesOrder.items.forEach((item, index) => {
 					message += `<div style="padding: 12px; ${index < salesOrder.items.length - 1 ? 'border-bottom: 1px solid #e5e7eb;' : ''}">`;
 					message += `<div style="display: flex; justify-content: space-between; align-items: start;">`;
@@ -2479,11 +3075,11 @@ Instructions:
 					message += `</div>`;
 					message += `</div>`;
 				});
-				
+
 				message += `</div>`;
 				message += `</div>`;
 			}
-			
+
 			// Totals Section
 			if (salesOrder.grand_total !== undefined) {
 				message += `<div style="margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px;">`;
@@ -2505,7 +3101,7 @@ Instructions:
 				message += `</div>`;
 				message += `</div>`;
 			}
-			
+
 			// Payment Schedule
 			if (salesOrder.payment_schedule && Array.isArray(salesOrder.payment_schedule) && salesOrder.payment_schedule.length > 0) {
 				message += `<div style="margin: 16px 0;">`;
@@ -2522,14 +3118,14 @@ Instructions:
 				message += `</ul>`;
 				message += `</div>`;
 			}
-			
+
 			message += `<div style="margin-top: 16px;"><a href="${soUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View Sales Order →</a></div>`;
 			message += '</div>';
 
-			addMessage(message, 'ai');
+			addMessage('ai', message);
 		} catch (error) {
 			console.error('displaySalesOrderDetails error:', error, { salesOrder });
-			addMessage(`❌ Error displaying Sales Order details: ${error.message || 'Unknown error'}`, 'ai');
+			addMessage('ai', `❌ Error displaying Sales Order details: ${error.message || 'Unknown error'}`);
 		}
 	};
 
@@ -2539,102 +3135,609 @@ Instructions:
 			// Validate document exists and is a valid object
 			if (!document || typeof document !== 'object' || Array.isArray(document)) {
 				console.error('displayDocumentDetails: document is invalid', { document, doctype });
-				addMessage(`❌ Error: Document data is missing or invalid.`, 'ai');
+				addMessage('ai', `❌ Error: Document data is missing or invalid.`);
 				return;
 			}
-			
+
 			// Validate doctype
 			if (!doctype || typeof doctype !== 'string') {
 				console.error('displayDocumentDetails: doctype is invalid', { document, doctype });
-				addMessage(`❌ Error: Invalid document type.`, 'ai');
+				addMessage('ai', `❌ Error: Invalid document type.`);
 				return;
 			}
-			
+
 			// Get document name/ID - handle different doctype naming conventions
 			// Use optional chaining and nullish coalescing for safety
 			const docName = document?.name || document?.item_code || document?.[`${doctype.toLowerCase()}_name`] || 'Unknown';
 			const docUrl = `${window.location.origin}/app/${doctype.toLowerCase().replace(/\s+/g, '-')}/${encodeURIComponent(docName)}`;
 			const nameField = document?.item_name || document?.name || document?.[`${doctype.toLowerCase()}_name`] || docName;
-			
+
 			let message = `<p>Here are the details for <strong>${escapeHtml(nameField)}</strong>:</p>`;
 			message += '<div style="margin-top: 12px;">';
-			
+
 			// Display key fields
-			const fieldsToShow = Object.keys(document).filter(key => 
+			const fieldsToShow = Object.keys(document).filter(key =>
 				!['name', 'doctype', 'creation', 'modified', 'modified_by', 'owner'].includes(key) &&
-				document[key] !== null && 
+				document[key] !== null &&
 				document[key] !== '' &&
 				typeof document[key] !== 'object'
 			).slice(0, 10); // Limit to first 10 fields
-			
+
 			fieldsToShow.forEach(field => {
 				const value = document[field];
 				if (value) {
 					message += `<div style="margin-bottom: 8px; font-size: 14px;"><span style="color: #6b7280; font-weight: 500;">${escapeHtml(field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</span> <span style="color: #1f2937;">${escapeHtml(String(value))}</span></div>`;
 				}
 			});
-			
+
 			message += `<div style="margin-top: 12px;"><a href="${docUrl}" target="_blank" style="color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 500;">View ${doctype} →</a></div>`;
 			message += '</div>';
-			
-			addMessage(message, 'ai');
+
+			addMessage('ai', message);
 		} catch (error) {
 			console.error('displayDocumentDetails error:', error, { document, doctype });
-			addMessage(`❌ Error displaying document details: ${error.message || 'Unknown error'}`, 'ai');
+			addMessage('ai', `❌ Error displaying document details: ${error.message || 'Unknown error'}`);
 		}
 	};
 
 	// Show typing indicator
 	const showTypingIndicator = () => {
-		const indicator = document.createElement('div');
-		indicator.className = 'message ai';
-		indicator.id = 'typingIndicator';
+		if (!messagesWrapper) return null;
+
+		const typingDiv = document.createElement('div');
+		typingDiv.className = 'message ai';
+		typingDiv.id = 'typing-indicator-' + Date.now();
 
 		const avatar = document.createElement('div');
 		avatar.className = 'message-avatar';
-		avatar.textContent = '🤖';
+		avatar.textContent = 'AI';
 
-		const typingDiv = document.createElement('div');
-		typingDiv.className = 'typing-indicator active';
-		
-		for (let i = 0; i < 3; i++) {
-			const dot = document.createElement('div');
-			dot.className = 'typing-dot';
-			typingDiv.appendChild(dot);
-		}
+		const indicator = document.createElement('div');
+		indicator.className = 'typing-indicator active';
+		indicator.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
 
-		indicator.appendChild(avatar);
-		indicator.appendChild(typingDiv);
-		chatMessages.appendChild(indicator);
+		typingDiv.appendChild(avatar);
+		typingDiv.appendChild(indicator);
+		messagesWrapper.appendChild(typingDiv);
 		scrollToBottom();
+
+		return typingDiv.id;
 	};
 
 	// Hide typing indicator
-	const hideTypingIndicator = () => {
-		const indicator = document.getElementById('typingIndicator');
+	const hideTypingIndicator = (id) => {
+		const indicator = document.getElementById(id);
 		if (indicator) {
 			indicator.remove();
 		}
 	};
 
-	// Show error message
-	const showError = (message) => {
-		addMessage(`❌ Error: ${message}`, 'ai');
-	};
-
-	const showSuccess = (message) => {
-		// Show temporary success message
-		const successDiv = document.createElement('div');
-		successDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #48bb78; color: white; padding: 12px 20px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
-		successDiv.textContent = `✅ ${message}`;
-		document.body.appendChild(successDiv);
-		setTimeout(() => successDiv.remove(), 3000);
-	};
-
 	// Scroll to bottom
 	const scrollToBottom = () => {
-		chatMessages.scrollTop = chatMessages.scrollHeight;
+		if (messagesContainer) {
+			messagesContainer.scrollTop = messagesContainer.scrollHeight;
+		}
 	};
+
+	// Show notification (simple implementation)
+	const showNotification = (message, type = 'info') => {
+		console.log(`[${type.toUpperCase()}] ${message}`);
+	};
+
+	// ============================================================================
+	// INTELLIGENT QUERY SYSTEM - DISABLED (COMMENTED OUT)
+	// ============================================================================
+
+	/**
+	 * Send query to intelligent query system
+	 * DISABLED - Commented out to use traditional functional approach
+	 * @param {string} query - User's natural language query
+	 * @returns {Promise<Object>} - Response from intelligent query API
+	 */
+	/*
+	const sendIntelligentQuery = async (query) => {
+		try {
+			const formData = new FormData();
+			formData.append('query', query);
+			formData.append('session_id', sessionId);
+
+			// Get CSRF token from meta tag (same as traditional system)
+			const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+			console.log('CSRF token for intelligent query:', csrfToken);
+
+			const response = await fetch(
+				'/api/method/exim_backend.api.intelligent_query.process_intelligent_query',
+				{
+					method: 'POST',
+					headers: {
+						'X-Frappe-CSRF-Token': csrfToken
+					},
+					body: formData
+				}
+			);
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const result = await response.json();
+			
+			// Check if there's an error in the response
+			if (result.message && result.message.status === 'error') {
+				throw new Error(result.message.message || 'Query processing failed');
+			}
+
+			return result.message || result;
+		} catch (error) {
+			console.error('Intelligent Query Error:', error);
+			console.error('Full error details:', error);
+			
+			// Don't automatically fallback - show error and let user decide
+			// The intelligent query should work for all DocTypes, so if it fails, 
+			// we should fix the issue rather than falling back to limited old system
+			throw error;
+		}
+	};
+	*/
+
+	/**
+	 * Display results from intelligent query system
+	 * DISABLED - Commented out to use traditional functional approach
+	 * @param {Object} result - Response from intelligent query
+	 */
+	/*
+	const displayIntelligentQueryResults = (result) => {
+		const { 
+			execution_type, 
+			data, 
+			ai_reasoning, 
+			detected_doctypes, 
+			query_metadata,
+			status 
+		} = result;
+
+		if (status === 'error') {
+			addMessage('ai', `❌ ${result.message || 'Query processing failed'}`);
+			return;
+		}
+
+		let message = '<div style="font-family: system-ui, -apple-system, sans-serif;">';
+
+		// Show AI Reasoning (collapsible)
+		if (ai_reasoning) {
+			message += `
+				<details style="margin-bottom: 16px; padding: 12px; background: #fff9db; border-radius: 8px; border-left: 3px solid #ffc107;">
+					<summary style="cursor: pointer; font-weight: 600; color: #856404; display: flex; align-items: center; gap: 8px;">
+						💡 AI Reasoning
+					</summary>
+					<p style="margin-top: 8px; font-size: 14px; color: #856404; line-height: 1.5;">
+						${escapeHtml(ai_reasoning)}
+					</p>
+				</details>
+			`;
+		}
+
+		// Show Detected DocTypes
+		if (detected_doctypes && detected_doctypes.length > 0) {
+			message += `
+				<div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+					<span style="font-size: 13px; color: #6b7280; font-weight: 500;">DocTypes:</span>
+					${detected_doctypes.map(dt => `
+						<span style="
+							background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+							color: white;
+							padding: 4px 12px;
+							border-radius: 12px;
+							font-size: 12px;
+							font-weight: 600;
+							box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+						">
+							${escapeHtml(dt)}
+						</span>
+					`).join('')}
+				</div>
+			`;
+		}
+
+		// Display Results
+		// First, check for get_document_details response (single document)
+		// Response format: {status: 'success', customer: {...}, doctype: 'Customer'}
+		// Only check for single document if there are NO results array and NO count
+		if (data && !data.results && !data.total_count && !data.count && !Array.isArray(data.results)) {
+			// Check for doctype-specific keys (customer, item, sales_order, etc.)
+			const doctypeKey = data.doctype ? data.doctype.toLowerCase() : null;
+			let document = null;
+			
+			if (doctypeKey && data[doctypeKey]) {
+				document = data[doctypeKey];
+			} else if (data.document) {
+				// Generic "document" key
+				document = data.document;
+			} else {
+				// Try to find any key that looks like a doctype (not status, doctype, etc.)
+				const excludedKeys = ['status', 'doctype', 'results', 'total_count', 'count', 'query_executed'];
+				for (const key in data) {
+					if (!excludedKeys.includes(key) && typeof data[key] === 'object' && data[key] !== null && !Array.isArray(data[key])) {
+						document = data[key];
+						break;
+					}
+				}
+			}
+			
+			if (document) {
+				// Display single document details
+				const doctypeName = data.doctype || detected_doctypes?.[0] || 'Document';
+				message += `
+					<div style="
+						background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+						border-radius: 12px;
+						padding: 20px;
+						margin-bottom: 16px;
+						border: 1px solid #dee2e6;
+						box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+					">
+						<h3 style="
+							font-size: 18px;
+							font-weight: 700;
+							color: #1f2937;
+							margin: 0 0 16px 0;
+							padding-bottom: 12px;
+							border-bottom: 2px solid #667eea;
+						">
+							${escapeHtml(doctypeName)} Details
+						</h3>
+				`;
+				
+				// Display all fields
+				const fields = Object.entries(document);
+				fields.forEach(([key, value], idx) => {
+					// Skip internal fields
+					if (key.startsWith('_') || key === 'doctype' || key === 'name') {
+						if (key === 'name') {
+							// Show name prominently
+							message += `
+								<div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 12px;">
+									<span style="color: #4CAF50;">●</span> ${escapeHtml(String(value))}
+								</div>
+							`;
+						}
+						return;
+					}
+					
+					// Skip null, undefined, empty objects, and empty arrays
+					if (value === null || value === undefined || 
+						(Array.isArray(value) && value.length === 0) ||
+						(typeof value === 'object' && Object.keys(value).length === 0)) {
+						return;
+					}
+					
+					const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+					
+					// Format value based on type
+					let displayValue = value;
+					if (Array.isArray(value)) {
+						displayValue = value.length + ' item(s)';
+					} else if (typeof value === 'object') {
+						displayValue = JSON.stringify(value, null, 2);
+					} else {
+						displayValue = String(value);
+					}
+					
+					message += `
+						<div style="font-size: 14px; color: #4b5563; margin-bottom: 8px; padding: 8px; background: white; border-radius: 6px;">
+							<span style="color: #9ca3af; font-weight: 600;">${escapeHtml(label)}:</span> 
+							<span style="font-weight: 500; color: #1f2937;">${escapeHtml(displayValue)}</span>
+						</div>
+					`;
+				});
+				
+				// Add "View" link if there's a "name" field
+				if (document.name && doctypeName) {
+					const docUrl = `/app/${doctypeName.toLowerCase().replace(/ /g, '-')}/${document.name}`;
+					message += `
+						<div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #dee2e6;">
+							<a href="${docUrl}" target="_blank" style="
+								color: #2196F3;
+								text-decoration: none;
+								font-size: 14px;
+								font-weight: 600;
+								display: inline-flex;
+								align-items: center;
+								gap: 6px;
+								transition: color 0.2s;
+							" onmouseover="this.style.color='#1976D2'" onmouseout="this.style.color='#2196F3'">
+								View ${escapeHtml(doctypeName)} →
+							</a>
+						</div>
+					`;
+				}
+				
+				message += '</div>';
+			}
+		}
+		
+		// Handle count-only responses (e.g., from count_documents API)
+		if (data && (data.total_count !== undefined || data.count !== undefined)) {
+			const count = data.total_count || data.count || 0;
+			
+			// Determine the correct DocType to display
+			let doctypeLabel = 'items';
+			if (data.doctype) {
+				// Use doctype from data (most accurate)
+				doctypeLabel = data.doctype.toLowerCase();
+			} else if (detected_doctypes && detected_doctypes.length > 0) {
+				// Fallback to detected doctypes
+				doctypeLabel = detected_doctypes[0].toLowerCase();
+			} else if (ai_reasoning) {
+				// Try to extract from AI reasoning
+				const reasoningLower = ai_reasoning.toLowerCase();
+				if (reasoningLower.includes('payment entry')) {
+					doctypeLabel = 'payment entries';
+				} else if (reasoningLower.includes('sales invoice')) {
+					doctypeLabel = 'sales invoices';
+				} else if (reasoningLower.includes('customer')) {
+					doctypeLabel = 'customers';
+				}
+			}
+			
+			message += `<p style="font-size: 15px; font-weight: 600; color: #1f2937; margin-bottom: 12px;">
+				You have <strong style="color: #4CAF50;">${count}</strong> ${doctypeLabel}.
+			</p>`;
+			
+			// If there are results to show, display them
+			if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+				message += '<div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">';
+				data.results.slice(0, 10).forEach((item, index) => {
+					message += `
+						<div style="
+							padding: 16px;
+							background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+							border-radius: 12px;
+							border-left: 4px solid #4CAF50;
+							box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+							transition: transform 0.2s, box-shadow 0.2s;
+						" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 6px rgba(0,0,0,0.05)';">
+					`;
+					
+					const fields = Object.entries(item);
+					fields.forEach(([key, value], idx) => {
+						const isFirstField = idx === 0;
+						const style = isFirstField 
+							? 'font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 8px;'
+							: 'font-size: 14px; color: #4b5563; margin-bottom: 6px;';
+						const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+						
+						message += `
+							<div style="${style}">
+								${isFirstField 
+									? `<span style="color: #4CAF50;">●</span> ${escapeHtml(String(value))}`
+									: `<span style="color: #9ca3af; font-weight: 600;">${escapeHtml(label)}:</span> <span style="font-weight: 500;">${escapeHtml(String(value))}</span>`
+								}
+							</div>
+						`;
+					});
+					
+					if (item.name && detected_doctypes && detected_doctypes.length > 0) {
+						const doctype = detected_doctypes[0];
+						const docUrl = `/app/${doctype.toLowerCase().replace(/ /g, '-')}/${item.name}`;
+						message += `
+							<div style="margin-top: 12px;">
+								<a href="${docUrl}" target="_blank" style="
+									color: #2196F3;
+									text-decoration: none;
+									font-size: 13px;
+									font-weight: 600;
+									display: inline-flex;
+									align-items: center;
+									gap: 4px;
+									transition: color 0.2s;
+								" onmouseover="this.style.color='#1976D2'" onmouseout="this.style.color='#2196F3'">
+									View ${doctype} →
+								</a>
+							</div>
+						`;
+					}
+					
+					message += '</div>';
+				});
+				message += '</div>';
+			}
+		} else if (data && data.results) {
+			const results = Array.isArray(data.results) ? data.results : [data.results];
+			const count = data.count || results.length;
+
+			// Check if this is a single aggregation result (like SUM, COUNT)
+			const isAggregationResult = count === 1 && results.length === 1 && 
+										Object.keys(results[0]).length <= 3 &&
+										(Object.keys(results[0]).some(k => k.toLowerCase().includes('sum') || 
+																		  k.toLowerCase().includes('count') ||
+																		  k.toLowerCase().includes('total') ||
+																		  k.toLowerCase().includes('avg')));
+
+			if (isAggregationResult) {
+				// Display aggregation result as a simple answer
+				const result = results[0];
+				const keys = Object.keys(result);
+				const values = Object.values(result);
+				
+				message += `<div style="padding: 20px; background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border-radius: 12px; border-left: 4px solid #0ea5e9; margin-top: 12px;">`;
+				
+				keys.forEach((key, idx) => {
+					const value = values[idx];
+					const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+					const isNumeric = typeof value === 'number' || (typeof value === 'string' && !isNaN(parseFloat(value)));
+					
+					message += `
+						<div style="margin-bottom: ${idx < keys.length - 1 ? '12px' : '0'};">
+							<div style="font-size: 13px; color: #0369a1; font-weight: 600; margin-bottom: 4px;">
+								${escapeHtml(label)}:
+							</div>
+							<div style="font-size: 24px; font-weight: 700; color: #0c4a6e;">
+								${isNumeric && typeof value === 'number' ? value.toLocaleString() : escapeHtml(String(value))}
+							</div>
+						</div>
+					`;
+				});
+				
+				message += `</div>`;
+			} else {
+				// Display as list of results
+				message += `<p style="font-size: 15px; font-weight: 600; color: #1f2937; margin-bottom: 12px;">
+					I found <strong style="color: #4CAF50;">${count}</strong> ${count === 1 ? 'result' : 'results'}:
+				</p>`;
+
+				message += '<div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">';
+
+				// Display up to 10 results
+				results.slice(0, 10).forEach((item, index) => {
+				message += `
+					<div style="
+						padding: 16px;
+						background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+						border-radius: 12px;
+						border-left: 4px solid #4CAF50;
+						box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+						transition: transform 0.2s, box-shadow 0.2s;
+					" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 6px rgba(0,0,0,0.05)';">
+				`;
+
+				// Display all fields
+				const fields = Object.entries(item);
+				fields.forEach(([key, value], idx) => {
+					const isFirstField = idx === 0;
+					const style = isFirstField 
+						? 'font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 8px;'
+						: 'font-size: 14px; color: #4b5563; margin-bottom: 6px;';
+
+					const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+					
+					message += `
+						<div style="${style}">
+							${isFirstField 
+								? `<span style="color: #4CAF50;">●</span> ${escapeHtml(String(value))}`
+								: `<span style="color: #9ca3af; font-weight: 600;">${escapeHtml(label)}:</span> <span style="font-weight: 500;">${escapeHtml(String(value))}</span>`
+							}
+						</div>
+					`;
+				});
+
+				// Add "View" link if there's a "name" field (ERPNext document)
+				if (item.name && detected_doctypes && detected_doctypes.length > 0) {
+					const doctype = detected_doctypes[0];
+					const docUrl = `/app/${doctype.toLowerCase().replace(/ /g, '-')}/${item.name}`;
+					message += `
+						<div style="margin-top: 12px;">
+							<a href="${docUrl}" target="_blank" style="
+								color: #2196F3;
+								text-decoration: none;
+								font-size: 13px;
+								font-weight: 600;
+								display: inline-flex;
+								align-items: center;
+								gap: 4px;
+								transition: color 0.2s;
+							" onmouseover="this.style.color='#1976D2'" onmouseout="this.style.color='#2196F3'">
+								View ${doctype} →
+							</a>
+						</div>
+					`;
+				}
+
+				message += '</div>';
+			});
+
+				message += '</div>';
+
+				// Show "and X more" if there are more results
+				if (results.length > 10) {
+					message += `
+						<p style="margin-top: 16px; font-size: 13px; color: #6b7280; font-style: italic;">
+							...and ${results.length - 10} more result${results.length - 10 === 1 ? '' : 's'}
+						</p>
+					`;
+				}
+			}
+
+			// Show query executed for dynamic queries
+			if (data.query_executed) {
+				message += `
+					<details style="margin-top: 16px; padding: 12px; background: #f3f4f6; border-radius: 8px;">
+						<summary style="cursor: pointer; font-weight: 600; color: #4b5563; font-size: 13px;">
+							🔍 Query Details
+						</summary>
+						<pre style="
+							margin-top: 8px;
+							padding: 12px;
+							background: #1f2937;
+							color: #10b981;
+							border-radius: 6px;
+							font-size: 12px;
+							overflow-x: auto;
+							font-family: 'Courier New', monospace;
+						">${escapeHtml(data.query_executed)}</pre>
+					</details>
+				`;
+			}
+		} else if (!data || (!data.total_count && !data.count && !data.results)) {
+			// Only show "no results" if we truly have no data
+			message += `
+				<div style="padding: 20px; background: #fef3c7; border-radius: 8px; border-left: 3px solid #f59e0b;">
+					<p style="font-size: 14px; color: #92400e; margin: 0;">
+						⚠️ No results found for your query.
+					</p>
+				</div>
+			`;
+		}
+
+		// Show Execution Type Badge
+		const executionBadge = execution_type === 'direct_api'
+			? `<span style="
+				background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+				color: white;
+				padding: 6px 14px;
+				border-radius: 16px;
+				font-size: 12px;
+				font-weight: 700;
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
+			">
+				⚡ Direct API
+			</span>`
+			: `<span style="
+				background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+				color: white;
+				padding: 6px 14px;
+				border-radius: 16px;
+				font-size: 12px;
+				font-weight: 700;
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				box-shadow: 0 2px 6px rgba(33, 150, 243, 0.3);
+			">
+				🧠 Dynamic Query
+			</span>`;
+
+		message += `
+			<div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+				<div>${executionBadge}</div>
+				<div style="font-size: 11px; color: #9ca3af;">
+					Powered by Intelligent Query System
+				</div>
+			</div>
+		`;
+
+		message += '</div>';
+
+		addMessage('ai', message);
+	};
+	*/
+
+	// ============================================================================
+	// END OF INTELLIGENT QUERY SYSTEM - DISABLED (COMMENTED OUT)
+	// ============================================================================
 
 	// Initialize when DOM is ready
 	if (document.readyState === 'loading') {

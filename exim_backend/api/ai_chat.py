@@ -158,6 +158,19 @@ ACTIONS:
 3. get_document_details - Full details (returns ALL fields): {{"action": "get_document_details", "doctype": "Customer", "name": "X", "execute_immediately": true}}
 4. count_documents - Statistics: {{"action": "count_documents", "doctype": "Customer", "filters": {{"field": "value"}}, "execute_immediately": true}}
 5. create_document - Create: {{"action": "create_document", "doctype": "Customer", "fields": {{}}, "execute_immediately": false}}
+   
+   ⚠️ CRITICAL FOR CUSTOMER CREATION ⚠️
+   When user provides customer creation request with name, phone, and email:
+   - DO NOT ask for more information - extract what's provided and create the action
+   - Extract customer name, phone/mobile number, email from the natural language query
+   - Map correctly: name → customer_name, phone/mobile → mobile_no, email → email_id
+   - Phone numbers: Extract digits only (remove spaces, dashes, parentheses if present)
+   - Email: Extract the full email address as provided
+   - ALWAYS set execute_immediately: false to show action button for user review
+   - Example: "Create customer Kunal 9988775566 kunal@example.com" 
+     → Extract: customer_name="Kunal", mobile_no="9988775566", email_id="kunal@example.com"
+     → Response: Show friendly message + action button with extracted fields
+   - If user provides all three (name, phone, email), create the action immediately - DO NOT ask for more
 6. find_duplicates - Find duplicates (Customer only): {{"action": "find_duplicates", "doctype": "Customer", "execute_immediately": true}}
 7. get_customers_by_order_count - Top customers by order count (Sales Order only): {{"action": "get_customers_by_order_count", "limit": 5, "execute_immediately": true}}
 8. get_customers_by_order_value - Biggest customers by total value (Sales Order only): {{"action": "get_customers_by_order_value", "limit": 5, "execute_immediately": true}}
@@ -179,6 +192,18 @@ EXAMPLES:
 Q: "Find customer Rajkumar" → {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"customer_name": {{"$like": "%Rajkumar%"}}}}, "execute_immediately": true}}
 Q: "Customers without email" → {{"action": "dynamic_search", "doctype": "Customer", "filters": {{"email_id": {{"$is_null": true}}}}, "execute_immediately": true}}
 Q: "Create supplier ABC Corp" → {{"action": "create_document", "doctype": "Supplier", "fields": {{"supplier_name": "ABC Corp"}}, "execute_immediately": false}}
+Q: "Create new customer Kunal 9988775566 kunal@example.com" → {{"action": "create_document", "doctype": "Customer", "fields": {{"customer_name": "Kunal", "mobile_no": "9988775566", "email_id": "kunal@example.com"}}, "execute_immediately": false}}
+Q: "Create customer John Doe with phone 1234567890 and email john@test.com" → {{"action": "create_document", "doctype": "Customer", "fields": {{"customer_name": "John Doe", "mobile_no": "1234567890", "email_id": "john@test.com"}}, "execute_immediately": false}}
+Q: "Create new customer Rajkumar Ravadi, 9381964965, rajkumarravadi3@gmail.com" → {{"action": "create_document", "doctype": "Customer", "fields": {{"customer_name": "Rajkumar Ravadi", "mobile_no": "9381964965", "email_id": "rajkumarravadi3@gmail.com"}}, "execute_immediately": false}}
+
+CRITICAL FOR CUSTOMER CREATION:
+- When user says "create customer [name] [phone] [email]", ALWAYS extract all three pieces of information
+- Map them correctly: name → customer_name, phone/mobile → mobile_no, email → email_id
+- Phone numbers can be in any format (with/without spaces, dashes, parentheses) - extract digits only if needed
+- Email addresses are usually clear - extract the full email
+- ALWAYS set execute_immediately: false so user can review before creating
+- DO NOT ask for more information if name, phone, and email are provided - extract them and show action button
+- If only name is provided, you can still create the action but mention missing fields in your response
 Q: "How many customers?" → {{"action": "count_documents", "doctype": "Customer", "execute_immediately": true}}
 Q: "What's X's phone?" → Direct answer if known, else search
 Q: "Show item description for banana" → {{"action": "get_document_details", "doctype": "Item", "name": "banana", "execute_immediately": true}}
@@ -399,34 +424,54 @@ def process_chat():
 		if pdf_file and pdf_file.filename.lower().endswith('.pdf'):
 			frappe.logger().info(f"PDF file uploaded: {pdf_file.filename}")
 			
-			# Save PDF to files
-			from frappe.utils.file_manager import save_file
-			file_doc = save_file(
-				fname=pdf_file.filename,
-				content=pdf_file.read(),
-				dt=None,
-				dn=None,
-				is_private=0
-			)
-			file_url = file_doc.file_url
-			
-			frappe.logger().info(f"PDF saved to: {file_url}")
-			
-			# AUTOMATICALLY process any PDF upload for sales order creation
-			frappe.logger().info(f"Automatically processing PDF for sales order creation")
-			pdf_result = handle_pdf_in_chat(file_url, session_id, message or "Create sales order from PDF")
-			
-			# Save to history
-			save_to_history(session_id, "user", f"{message or 'Uploaded PDF'} [PDF: {pdf_file.filename}]")
-			save_to_history(session_id, "assistant", pdf_result["message"])
-			
-			return {
-				"status": pdf_result.get("status", "success"),
-				"response": pdf_result["message"],
-				"requires_action": pdf_result.get("requires_action", False),
-				"data": pdf_result.get("data"),
-				"session_id": session_id
-			}
+			try:
+				# Save PDF to files
+				from frappe.utils.file_manager import save_file
+				file_doc = save_file(
+					fname=pdf_file.filename,
+					content=pdf_file.read(),
+					dt=None,
+					dn=None,
+					is_private=0
+				)
+				file_url = file_doc.file_url
+				
+				frappe.logger().info(f"PDF saved to: {file_url}")
+				
+				# AUTOMATICALLY process any PDF upload for sales order creation
+				frappe.logger().info(f"Automatically processing PDF for sales order creation")
+				try:
+					pdf_result = handle_pdf_in_chat(file_url, session_id, message or "Create sales order from PDF")
+				except Exception as pdf_error:
+					frappe.logger().error(f"Error in handle_pdf_in_chat: {str(pdf_error)}")
+					frappe.logger().exception("Full traceback:")
+					return {
+						"status": "error",
+						"response": f"❌ Failed to process PDF: {str(pdf_error)}. Please check server logs for details.",
+						"requires_action": False,
+						"session_id": session_id
+					}
+				
+				# Save to history
+				save_to_history(session_id, "user", f"{message or 'Uploaded PDF'} [PDF: {pdf_file.filename}]")
+				save_to_history(session_id, "assistant", pdf_result.get("message", "PDF processed"))
+				
+				return {
+					"status": pdf_result.get("status", "success"),
+					"response": pdf_result.get("message", "PDF processed successfully"),
+					"requires_action": pdf_result.get("requires_action", False),
+					"data": pdf_result.get("data"),
+					"session_id": session_id
+				}
+			except Exception as e:
+				frappe.logger().error(f"Error processing PDF file: {str(e)}")
+				frappe.logger().exception("Full traceback:")
+				return {
+					"status": "error",
+					"response": f"❌ Failed to process PDF file: {str(e)}. Please ensure the file is a valid PDF and try again.",
+					"requires_action": False,
+					"session_id": session_id
+				}
 		# ========== PDF SALES ORDER INTEGRATION END ==========
 		
 		if not message and not image_file:

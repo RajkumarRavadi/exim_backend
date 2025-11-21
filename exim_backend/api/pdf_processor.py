@@ -119,7 +119,8 @@ class PDFProcessor:
 		text_content = {
 			"full_text": "",
 			"pages": [],
-			"page_count": 0
+			"page_count": 0,
+			"ocr_used": False
 		}
 		
 		try:
@@ -139,7 +140,6 @@ class PDFProcessor:
 						text_content["full_text"] += f"\n--- Page {page_num} ---\n{page_text}"
 				
 				frappe.logger().info(f"Extracted text using pdfplumber: {len(text_content['full_text'])} characters")
-				return text_content
 				
 			except ImportError:
 				frappe.logger().warning("pdfplumber not installed, falling back to PyPDF2")
@@ -161,15 +161,70 @@ class PDFProcessor:
 						text_content["full_text"] += f"\n--- Page {page_num} ---\n{page_text}"
 				
 				frappe.logger().info(f"Extracted text using PyPDF2: {len(text_content['full_text'])} characters")
-				return text_content
 				
 			except ImportError:
 				frappe.logger().error("Neither pdfplumber nor PyPDF2 is installed")
-				return text_content
 			
 		except Exception as e:
 			frappe.logger().error(f"Error extracting text from PDF: {str(e)}")
-			return text_content
+		if self._needs_ocr_fallback(text_content):
+			self._extract_text_via_ocr(file_path, text_content)
+		
+		return text_content
+
+	def _needs_ocr_fallback(self, text_content: Dict[str, Any]) -> bool:
+		"""
+		Determine if OCR fallback is needed (e.g., scanned PDFs with no extractable text).
+		"""
+		full_text = (text_content.get("full_text") or "").strip()
+		if len(full_text) >= 80:
+			return False
+		
+		pages = text_content.get("pages") or []
+		for page in pages:
+			if (page.get("text") or "").strip():
+				return False
+		
+		return True
+
+	def _extract_text_via_ocr(self, file_path: str, text_content: Dict[str, Any], max_pages: int = 5):
+		"""
+		Extract text using OCR (pytesseract) for scanned PDFs.
+		Updates text_content in-place.
+		"""
+		try:
+			from pdf2image import convert_from_path
+			import pytesseract
+		except ImportError:
+			frappe.logger().warning("OCR fallback unavailable (pdf2image or pytesseract not installed)")
+			return
+		
+		try:
+			images = convert_from_path(file_path, dpi=250, first_page=1, last_page=max_pages)
+		except Exception as e:
+			frappe.logger().error(f"OCR fallback failed to convert PDF: {str(e)}")
+			return
+		
+		text_content["ocr_used"] = True
+		text_content["pages"] = []
+		text_content["full_text"] = ""
+		text_content["page_count"] = len(images)
+		
+		for page_idx, image in enumerate(images, start=1):
+			if page_idx > max_pages:
+				break
+			try:
+				page_text = pytesseract.image_to_string(image) or ""
+				text_content["pages"].append({
+					"page_number": page_idx,
+					"text": page_text
+				})
+				text_content["full_text"] += f"\n--- OCR Page {page_idx} ---\n{page_text}"
+			except Exception as ocr_error:
+				frappe.logger().error(f"OCR extraction error on page {page_idx}: {str(ocr_error)}")
+				continue
+		
+		frappe.logger().info(f"OCR fallback extracted {len(text_content['pages'])} page(s) of text")
 	
 	def _extract_tables(self, file_path):
 		"""
