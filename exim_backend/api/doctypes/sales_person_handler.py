@@ -15,7 +15,8 @@ hierarchical organization of sales persons. Key fields include:
 """
 
 import frappe
-from frappe.utils import flt
+from frappe.utils import flt, getdate, add_days, today
+from datetime import datetime, timedelta
 from exim_backend.api.doctypes.base_handler import BaseDocTypeHandler
 
 
@@ -663,7 +664,7 @@ class SalesPersonHandler(BaseDocTypeHandler):
 				"message": f"Failed to count sales orders: {str(e)}"
 			}
 	
-	def get_sales_person_summary(self, sales_person):
+	def get_sales_person_summary(self, sales_person, from_date=None, to_date=None):
 		"""
 		Get comprehensive summary for a sales person including:
 		- Sales Orders count (submitted and draft)
@@ -679,6 +680,8 @@ class SalesPersonHandler(BaseDocTypeHandler):
 		
 		Args:
 			sales_person: Sales Person name/ID
+			from_date: Optional start date for filtering (YYYY-MM-DD format)
+			to_date: Optional end date for filtering (YYYY-MM-DD format)
 		
 		Returns:
 			dict: Comprehensive summary with all metrics
@@ -691,6 +694,26 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					"message": f"Sales Person '{sales_person}' not found"
 				}
 			
+			# Prepare date filters
+			date_conditions = ""
+			date_params = {}
+			if from_date:
+				date_conditions += " AND so.transaction_date >= %(from_date)s"
+				date_params["from_date"] = from_date
+			if to_date:
+				date_conditions += " AND so.transaction_date <= %(to_date)s"
+				date_params["to_date"] = to_date
+			
+			# Date conditions for invoices (use posting_date)
+			invoice_date_conditions = ""
+			invoice_date_params = {}
+			if from_date:
+				invoice_date_conditions += " AND si.posting_date >= %(from_date)s"
+				invoice_date_params["from_date"] = from_date
+			if to_date:
+				invoice_date_conditions += " AND si.posting_date <= %(to_date)s"
+				invoice_date_params["to_date"] = to_date
+			
 			summary = {}
 			
 			# -----------------------
@@ -698,28 +721,30 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# -----------------------
 			# Query Sales Orders through Sales Team where sales_person matches
 			# and parenttype is "Sales Order" and docstatus is 1 (submitted)
-			submitted_sales_orders = frappe.db.sql("""
+			submitted_sales_orders = frappe.db.sql(f"""
 				SELECT DISTINCT st.parent as sales_order_name
 				FROM `tabSales Team` st
 				INNER JOIN `tabSales Order` so ON so.name = st.parent
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Order'
 				AND so.docstatus = 1
-			""", {"sales_person": sales_person}, as_dict=True)
+				{date_conditions}
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
 			summary["sales_order_count"] = len(submitted_sales_orders)
 			
 			# -----------------------
 			# Sales Orders Count (Draft/Non-submitted - docstatus = 0)
 			# -----------------------
-			draft_sales_orders = frappe.db.sql("""
+			draft_sales_orders = frappe.db.sql(f"""
 				SELECT DISTINCT st.parent as sales_order_name
 				FROM `tabSales Team` st
 				INNER JOIN `tabSales Order` so ON so.name = st.parent
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Order'
 				AND so.docstatus = 0
-			""", {"sales_person": sales_person}, as_dict=True)
+				{date_conditions}
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
 			summary["draft_sales_order_count"] = len(draft_sales_orders)
 			summary["total_sales_order_count"] = summary["sales_order_count"] + summary["draft_sales_order_count"]
@@ -728,7 +753,7 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# Sales Orders Total Amount (Submitted)
 			# -----------------------
 			# Get total allocated amount from Sales Team for submitted orders
-			sales_order_total = frappe.db.sql("""
+			sales_order_total = frappe.db.sql(f"""
 				SELECT 
 					SUM(st.allocated_amount) as total_allocated_amount,
 					SUM(so.grand_total) as total_grand_total
@@ -737,7 +762,8 @@ class SalesPersonHandler(BaseDocTypeHandler):
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Order'
 				AND so.docstatus = 1
-			""", {"sales_person": sales_person}, as_dict=True)
+				{date_conditions}
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
 			summary["total_sales_order_amount"] = flt(sales_order_total[0]["total_allocated_amount"]) if sales_order_total and sales_order_total[0]["total_allocated_amount"] else 0
 			summary["total_sales_order_grand_total"] = flt(sales_order_total[0]["total_grand_total"]) if sales_order_total and sales_order_total[0]["total_grand_total"] else 0
@@ -745,28 +771,30 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# -----------------------
 			# Sales Invoices Count (Submitted - docstatus = 1)
 			# -----------------------
-			submitted_sales_invoices = frappe.db.sql("""
+			submitted_sales_invoices = frappe.db.sql(f"""
 				SELECT DISTINCT st.parent as sales_invoice_name
 				FROM `tabSales Team` st
 				INNER JOIN `tabSales Invoice` si ON si.name = st.parent
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Invoice'
 				AND si.docstatus = 1
-			""", {"sales_person": sales_person}, as_dict=True)
+				{invoice_date_conditions}
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["sales_invoice_count"] = len(submitted_sales_invoices)
 			
 			# -----------------------
 			# Sales Invoices Count (Draft/Non-submitted - docstatus = 0)
 			# -----------------------
-			draft_sales_invoices = frappe.db.sql("""
+			draft_sales_invoices = frappe.db.sql(f"""
 				SELECT DISTINCT st.parent as sales_invoice_name
 				FROM `tabSales Team` st
 				INNER JOIN `tabSales Invoice` si ON si.name = st.parent
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Invoice'
 				AND si.docstatus = 0
-			""", {"sales_person": sales_person}, as_dict=True)
+				{invoice_date_conditions}
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["draft_sales_invoice_count"] = len(draft_sales_invoices)
 			summary["total_sales_invoice_count"] = summary["sales_invoice_count"] + summary["draft_sales_invoice_count"]
@@ -775,7 +803,7 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# Sales Invoices Total Amount (Submitted)
 			# -----------------------
 			# Get total allocated amount and grand total from Sales Team for submitted invoices
-			sales_invoice_total = frappe.db.sql("""
+			sales_invoice_total = frappe.db.sql(f"""
 				SELECT 
 					SUM(st.allocated_amount) as total_allocated_amount,
 					SUM(si.grand_total) as total_grand_total
@@ -784,7 +812,8 @@ class SalesPersonHandler(BaseDocTypeHandler):
 				WHERE st.sales_person = %(sales_person)s
 				AND st.parenttype = 'Sales Invoice'
 				AND si.docstatus = 1
-			""", {"sales_person": sales_person}, as_dict=True)
+				{invoice_date_conditions}
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["total_sales_amount"] = flt(sales_invoice_total[0]["total_allocated_amount"]) if sales_invoice_total and sales_invoice_total[0]["total_allocated_amount"] else 0
 			summary["total_sales_invoice_grand_total"] = flt(sales_invoice_total[0]["total_grand_total"]) if sales_invoice_total and sales_invoice_total[0]["total_grand_total"] else 0
@@ -793,7 +822,7 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# Outstanding Amount
 			# -----------------------
 			# Calculate outstanding amount from submitted sales invoices
-			outstanding_result = frappe.db.sql("""
+			outstanding_result = frappe.db.sql(f"""
 				SELECT SUM(si.outstanding_amount) as total_outstanding
 				FROM `tabSales Invoice` si
 				WHERE si.docstatus = 1
@@ -803,32 +832,65 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Invoice'
 				)
-			""", {"sales_person": sales_person}, as_dict=True)
+				{invoice_date_conditions}
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["outstanding_amount"] = flt(outstanding_result[0]["total_outstanding"]) if outstanding_result and outstanding_result[0]["total_outstanding"] else 0
+			
+			# # -----------------------
+			# # Paid Amount
+			# # -----------------------
+			# paid_result = frappe.db.sql(f"""
+			# 	SELECT SUM(si.paid_amount) as total_paid
+			# 	FROM `tabSales Invoice` si
+			# 	WHERE si.docstatus = 1
+			# 	AND si.name IN (
+			# 		SELECT DISTINCT st.parent
+			# 		FROM `tabSales Team` st
+			# 		WHERE st.sales_person = %(sales_person)s
+			# 		AND st.parenttype = 'Sales Invoice'
+			# 	)
+			# 	{invoice_date_conditions}
+			# """, {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
+			
+			# summary["paid_amount"] = flt(paid_result[0]["total_paid"]) if paid_result and paid_result[0]["total_paid"] else 0
 			
 			# -----------------------
 			# Paid Amount
 			# -----------------------
-			paid_result = frappe.db.sql("""
-				SELECT SUM(si.paid_amount) as total_paid
-				FROM `tabSales Invoice` si
-				WHERE si.docstatus = 1
-				AND si.name IN (
+			# Payment Entry references are stored in tabPayment Entry Reference child table
+			# We need to join Payment Entry with Payment Entry Reference to get the allocated amounts
+			paid_date_conditions = ""
+			paid_date_params = {}
+			if from_date:
+				paid_date_conditions += " AND pe.posting_date >= %(from_date)s"
+				paid_date_params["from_date"] = from_date
+			if to_date:
+				paid_date_conditions += " AND pe.posting_date <= %(to_date)s"
+				paid_date_params["to_date"] = to_date
+			
+			paid_result = frappe.db.sql(f"""
+				SELECT SUM(per.allocated_amount) as total_paid
+				FROM `tabPayment Entry` pe
+				INNER JOIN `tabPayment Entry Reference` per ON pe.name = per.parent
+				WHERE per.reference_doctype = 'Sales Invoice'
+				AND per.reference_name IN (
 					SELECT DISTINCT st.parent
 					FROM `tabSales Team` st
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Invoice'
 				)
-			""", {"sales_person": sales_person}, as_dict=True)
-			
+				AND pe.docstatus = 1
+				{paid_date_conditions}
+			""", {"sales_person": sales_person, **paid_date_params}, as_dict=True)
+
 			summary["paid_amount"] = flt(paid_result[0]["total_paid"]) if paid_result and paid_result[0]["total_paid"] else 0
-			
+
 			# -----------------------
 			# Unique Customers Handled
 			# -----------------------
 			# Get unique customers from both Sales Orders and Sales Invoices
-			customers_from_orders = frappe.db.sql("""
+			customers_from_orders = frappe.db.sql(f"""
 				SELECT DISTINCT so.customer
 				FROM `tabSales Order` so
 				WHERE so.name IN (
@@ -838,9 +900,10 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					AND st.parenttype = 'Sales Order'
 				)
 				AND so.customer IS NOT NULL
-			""", {"sales_person": sales_person}, as_dict=True)
+				{date_conditions}
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
-			customers_from_invoices = frappe.db.sql("""
+			customers_from_invoices = frappe.db.sql(f"""
 				SELECT DISTINCT si.customer
 				FROM `tabSales Invoice` si
 				WHERE si.name IN (
@@ -850,7 +913,8 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					AND st.parenttype = 'Sales Invoice'
 				)
 				AND si.customer IS NOT NULL
-			""", {"sales_person": sales_person}, as_dict=True)
+				{invoice_date_conditions}
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			# Combine and get unique customers
 			all_customers = set()
@@ -890,7 +954,7 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# -----------------------
 			# Payment Status Breakdown
 			# -----------------------
-			payment_status = frappe.db.sql("""
+			payment_status = frappe.db.sql(f"""
 				SELECT 
 					si.status,
 					COUNT(*) as count,
@@ -903,15 +967,16 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Invoice'
 				)
+				{invoice_date_conditions}
 				GROUP BY si.status
-			""", {"sales_person": sales_person}, as_dict=True)
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["payment_status_breakdown"] = payment_status
 			
 			# -----------------------
 			# Sales Order Status Breakdown
 			# -----------------------
-			order_status = frappe.db.sql("""
+			order_status = frappe.db.sql(f"""
 				SELECT 
 					so.status,
 					COUNT(*) as count,
@@ -923,15 +988,16 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Order'
 				)
+				{date_conditions}
 				GROUP BY so.status
-			""", {"sales_person": sales_person}, as_dict=True)
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
 			summary["sales_order_status_breakdown"] = order_status
 			
 			# -----------------------
 			# Recent Activity (Last 5 Sales Orders and Invoices)
 			# -----------------------
-			recent_orders = frappe.db.sql("""
+			recent_orders = frappe.db.sql(f"""
 				SELECT 
 					so.name,
 					so.customer,
@@ -947,11 +1013,12 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Order'
 				)
+				{date_conditions}
 				ORDER BY so.modified DESC
 				LIMIT 5
-			""", {"sales_person": sales_person}, as_dict=True)
+			""", {"sales_person": sales_person, **date_params}, as_dict=True)
 			
-			recent_invoices = frappe.db.sql("""
+			recent_invoices = frappe.db.sql(f"""
 				SELECT 
 					si.name,
 					si.customer,
@@ -968,9 +1035,10 @@ class SalesPersonHandler(BaseDocTypeHandler):
 					WHERE st.sales_person = %(sales_person)s
 					AND st.parenttype = 'Sales Invoice'
 				)
+				{invoice_date_conditions}
 				ORDER BY si.modified DESC
 				LIMIT 5
-			""", {"sales_person": sales_person}, as_dict=True)
+			""", {"sales_person": sales_person, **invoice_date_params}, as_dict=True)
 			
 			summary["recent_orders"] = recent_orders
 			summary["recent_invoices"] = recent_invoices
@@ -990,15 +1058,55 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			# Total Commission Earned (if available)
 			# -----------------------
 			# Calculate from incentives in Sales Team
-			commission_result = frappe.db.sql("""
+			# Note: Commission is linked to parent documents, so we need to filter by parent dates
+			commission_date_conditions = ""
+			commission_date_params = {}
+			if from_date or to_date:
+				conditions = []
+				if from_date:
+					conditions.append("""
+						((st.parenttype = 'Sales Order' AND EXISTS (
+							SELECT 1 FROM `tabSales Order` so 
+							WHERE so.name = st.parent AND so.transaction_date >= %(from_date)s
+						))
+						OR (st.parenttype = 'Sales Invoice' AND EXISTS (
+							SELECT 1 FROM `tabSales Invoice` si 
+							WHERE si.name = st.parent AND si.posting_date >= %(from_date)s
+						)))
+					""")
+					commission_date_params["from_date"] = from_date
+				if to_date:
+					conditions.append("""
+						((st.parenttype = 'Sales Order' AND EXISTS (
+							SELECT 1 FROM `tabSales Order` so 
+							WHERE so.name = st.parent AND so.transaction_date <= %(to_date)s
+						))
+						OR (st.parenttype = 'Sales Invoice' AND EXISTS (
+							SELECT 1 FROM `tabSales Invoice` si 
+							WHERE si.name = st.parent AND si.posting_date <= %(to_date)s
+						)))
+					""")
+					commission_date_params["to_date"] = to_date
+				if conditions:
+					commission_date_conditions = " AND " + " AND ".join(conditions)
+			
+			commission_result = frappe.db.sql(f"""
 				SELECT SUM(st.incentives) as total_incentives
 				FROM `tabSales Team` st
 				WHERE st.sales_person = %(sales_person)s
 				AND st.incentives IS NOT NULL
 				AND st.incentives > 0
-			""", {"sales_person": sales_person}, as_dict=True)
+				{commission_date_conditions}
+			""", {"sales_person": sales_person, **commission_date_params}, as_dict=True)
 			
 			summary["total_commission_earned"] = flt(commission_result[0]["total_incentives"]) if commission_result and commission_result[0]["total_incentives"] else 0
+			
+			# Add date range info to summary
+			if from_date or to_date:
+				summary["date_range"] = {
+					"from_date": from_date,
+					"to_date": to_date
+				}
 			
 			return {
 				"status": "success",
@@ -1012,5 +1120,118 @@ class SalesPersonHandler(BaseDocTypeHandler):
 			return {
 				"status": "error",
 				"message": f"Failed to get sales person summary: {str(e)}"
+			}
+	
+	def get_all_sales_persons_summary(self, from_date=None, to_date=None, filters=None):
+		"""
+		Get comprehensive summary for all sales persons.
+		Returns data in a table format suitable for display.
+		
+		Args:
+			from_date: Optional start date for filtering (YYYY-MM-DD format)
+			to_date: Optional end date for filtering (YYYY-MM-DD format)
+			filters: Optional filters for sales persons (e.g., {"enabled": 1})
+		
+		Returns:
+			dict: Table data with all sales persons and their summaries
+		"""
+		try:
+			# Get all sales persons
+			conditions = []
+			values = {}
+			
+			# Apply filters if provided
+			if filters:
+				for field, value in filters.items():
+					if value is not None and value != "":
+						conditions.append(f"`{field}` = %({field})s")
+						values[field] = value
+			
+			where_clause = " AND ".join(conditions) if conditions else "1=1"
+			
+			# Get all enabled sales persons (exclude groups by default, or include if filter specifies)
+			sales_persons = frappe.db.sql(f"""
+				SELECT 
+					name,
+					sales_person_name,
+					employee,
+					department,
+					enabled,
+					is_group
+				FROM `tab{self.doctype}`
+				WHERE {where_clause}
+				ORDER BY sales_person_name ASC
+			""", values, as_dict=True)
+			
+			if not sales_persons:
+				return {
+					"status": "success",
+					"count": 0,
+					"table_data": [],
+					"from_date": from_date,
+					"to_date": to_date
+				}
+			
+			# Get summary for each sales person
+			table_data = []
+			for sp in sales_persons:
+				# Skip group nodes if not explicitly requested
+				if sp.get("is_group") and (not filters or not filters.get("is_group")):
+					continue
+				
+				# Get summary for this sales person
+				summary_result = self.get_sales_person_summary(sp["name"], from_date=from_date, to_date=to_date)
+				
+				if summary_result.get("status") == "success":
+					summary = summary_result.get("summary", {})
+					
+					# Create table row
+					row = {
+						"sales_person": sp["name"],
+						"sales_person_name": summary.get("sales_person_name") or sp["sales_person_name"],
+						"employee": summary.get("employee") or sp.get("employee"),
+						"department": summary.get("department") or sp.get("department"),
+						"enabled": summary.get("enabled", sp.get("enabled", 0)),
+						
+						# Sales Orders
+						"sales_order_count": summary.get("sales_order_count", 0),
+						"draft_sales_order_count": summary.get("draft_sales_order_count", 0),
+						"total_sales_order_count": summary.get("total_sales_order_count", 0),
+						"total_sales_order_amount": summary.get("total_sales_order_amount", 0),
+						
+						# Sales Invoices
+						"sales_invoice_count": summary.get("sales_invoice_count", 0),
+						"draft_sales_invoice_count": summary.get("draft_sales_invoice_count", 0),
+						"total_sales_invoice_count": summary.get("total_sales_invoice_count", 0),
+						"total_sales_amount": summary.get("total_sales_amount", 0),
+						
+						# Financial
+						"outstanding_amount": summary.get("outstanding_amount", 0),
+						"paid_amount": summary.get("paid_amount", 0),
+						"total_commission_earned": summary.get("total_commission_earned", 0),
+						
+						# Performance
+						"unique_customers": summary.get("unique_customers", 0),
+						"average_order_value": summary.get("average_order_value", 0),
+						"average_invoice_value": summary.get("average_invoice_value", 0),
+						"conversion_rate": summary.get("conversion_rate", 0),
+					}
+					
+					table_data.append(row)
+			
+			return {
+				"status": "success",
+				"count": len(table_data),
+				"table_data": table_data,
+				"from_date": from_date,
+				"to_date": to_date
+			}
+			
+		except Exception as e:
+			frappe.logger().error(f"Get all sales persons summary error: {str(e)}")
+			frappe.log_error(title="All Sales Persons Summary Error", message=frappe.get_traceback())
+			return {
+				"status": "error",
+				"message": f"Failed to get all sales persons summary: {str(e)}"
 			}
 

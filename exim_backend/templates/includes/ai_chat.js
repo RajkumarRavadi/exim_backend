@@ -1295,6 +1295,8 @@
 				await handleGetSalesPersonCount(action);
 			} else if (action.action === 'get_sales_person_names') {
 				await handleGetSalesPersonNames(action);
+			} else if (action.action === 'get_all_sales_persons_summary') {
+				await handleGetAllSalesPersonsSummary(action);
 			} else if (action.action === 'search_customer') {
 				await handleSearchCustomer(action);
 			} else {
@@ -1621,6 +1623,8 @@
 			handleGetSalesPersonCount(action);
 		} else if (action.action === 'get_sales_person_names') {
 			handleGetSalesPersonNames(action);
+		} else if (action.action === 'get_all_sales_persons_summary') {
+			handleGetAllSalesPersonsSummary(action);
 		} else if (action.action === 'search_customer') {
 			// Legacy support
 			handleSearchCustomer(action);
@@ -2692,6 +2696,196 @@
 			hideTypingIndicator(typingId);
 			addMessage('ai', '❌ Error fetching sales person names. Please try again.', 'ai');
 			console.error('Get sales person names error:', error);
+		}
+	};
+
+	// Handle get all sales persons summary
+	const handleGetAllSalesPersonsSummary = async (action) => {
+		let typingId;
+		try {
+			typingId = showTypingIndicator();
+
+			const formData = new FormData();
+			if (action?.from_date) {
+				formData.append('from_date', action.from_date);
+			}
+			if (action?.to_date) {
+				formData.append('to_date', action.to_date);
+			}
+			if (action?.filters) {
+				formData.append('filters', JSON.stringify(action.filters));
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_all_sales_persons_summary', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			console.log('📊 All Sales Persons Summary API Response:', responseData);
+			const result = responseData.message || responseData;
+			console.log('📊 Parsed result:', result);
+			hideTypingIndicator(typingId);
+
+			if (result.status === 'success' && result.table_data) {
+				const tableData = result.table_data;
+				const fromDate = result.from_date || 'N/A';
+				const toDate = result.to_date || 'N/A';
+
+				// Build table HTML
+				let message = `<div style="max-width: 100%; overflow-x: auto;">`;
+				message += `<h3 style="margin-bottom: 16px; color: #1f2937; font-size: 18px; font-weight: 600;">📊 All Sales Persons Performance Summary</h3>`;
+				message += `<p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">Date Range: <strong>${escapeHtml(fromDate)}</strong> to <strong>${escapeHtml(toDate)}</strong> | Total Sales Persons: <strong>${result.count}</strong></p>`;
+
+				// Create responsive table
+				message += `<div style="overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: white;">`;
+				message += `<table style="width: 100%; border-collapse: collapse; font-size: 13px; min-width: 1400px;">`;
+
+				// Table header
+				message += `<thead style="background: #f9fafb; border-bottom: 2px solid #e5e7eb;">`;
+				message += `<tr>`;
+				message += `<th style="padding: 12px; text-align: left; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb; position: sticky; left: 0; background: #f9fafb; z-index: 10;">Sales Person</th>`;
+				message += `<th style="padding: 12px; text-align: left; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Employee</th>`;
+				message += `<th style="padding: 12px; text-align: center; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Orders<br/><span style="font-size: 11px; font-weight: 400; color: #6b7280;">(Sub/Draft/Total)</span></th>`;
+				message += `<th style="padding: 12px; text-align: center; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Invoices<br/><span style="font-size: 11px; font-weight: 400; color: #6b7280;">(Sub/Draft/Total)</span></th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Order Amount</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Invoice Amount</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Outstanding</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Paid</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Commission</th>`;
+				message += `<th style="padding: 12px; text-align: center; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Customers</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Avg Order</th>`;
+				message += `<th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-right: 1px solid #e5e7eb;">Avg Invoice</th>`;
+				message += `<th style="padding: 12px; text-align: center; font-weight: 600; color: #374151;">Conv %</th>`;
+				message += `</tr>`;
+				message += `</thead>`;
+
+				// Table body
+				message += `<tbody>`;
+				tableData.forEach((row, index) => {
+					const bgColor = index % 2 === 0 ? '#ffffff' : '#f9fafb';
+					message += `<tr style="background: ${bgColor}; border-bottom: 1px solid #e5e7eb;">`;
+
+					// Sales Person Name (sticky column)
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; position: sticky; left: 0; background: ${bgColor}; z-index: 5; font-weight: 600; color: #1f2937;">${escapeHtml(row.sales_person_name || row.sales_person)}</td>`;
+
+					// Employee
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; color: #6b7280;">${escapeHtml(row.employee || '-')}</td>`;
+
+					// Orders (Submitted/Draft/Total)
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center;">`;
+					message += `<span style="color: #3b82f6; font-weight: 600;">${row.sales_order_count || 0}</span> / `;
+					message += `<span style="color: #6b7280;">${row.draft_sales_order_count || 0}</span> / `;
+					message += `<span style="font-weight: 600;">${row.total_sales_order_count || 0}</span>`;
+					message += `</td>`;
+
+					// Invoices (Submitted/Draft/Total)
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center;">`;
+					message += `<span style="color: #10b981; font-weight: 600;">${row.sales_invoice_count || 0}</span> / `;
+					message += `<span style="color: #6b7280;">${row.draft_sales_invoice_count || 0}</span> / `;
+					message += `<span style="font-weight: 600;">${row.total_sales_invoice_count || 0}</span>`;
+					message += `</td>`;
+
+					// Order Amount
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #059669; font-weight: 600;">${(row.total_sales_order_amount || 0).toLocaleString()}</td>`;
+
+					// Invoice Amount
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #059669; font-weight: 600;">${(row.total_sales_amount || 0).toLocaleString()}</td>`;
+
+					// Outstanding
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">${(row.outstanding_amount || 0).toLocaleString()}</td>`;
+
+					// Paid
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #10b981; font-weight: 600;">${(row.paid_amount || 0).toLocaleString()}</td>`;
+
+					// Commission
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #7c3aed; font-weight: 600;">${(row.total_commission_earned || 0).toLocaleString()}</td>`;
+
+					// Customers
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center; font-weight: 600;">${row.unique_customers || 0}</td>`;
+
+					// Avg Order Value
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${(row.average_order_value || 0).toLocaleString()}</td>`;
+
+					// Avg Invoice Value
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${(row.average_invoice_value || 0).toLocaleString()}</td>`;
+
+					// Conversion Rate
+					const convRate = (row.conversion_rate || 0).toFixed(1);
+					const convColor = row.conversion_rate >= 80 ? '#10b981' : row.conversion_rate >= 50 ? '#f59e0b' : '#dc2626';
+					message += `<td style="padding: 12px; text-align: center; color: ${convColor}; font-weight: 600;">${convRate}%</td>`;
+
+					message += `</tr>`;
+				});
+				message += `</tbody>`;
+
+				// Table footer with totals
+				if (tableData.length > 0) {
+					const totals = {
+						sales_order_count: tableData.reduce((sum, r) => sum + (r.sales_order_count || 0), 0),
+						total_sales_order_count: tableData.reduce((sum, r) => sum + (r.total_sales_order_count || 0), 0),
+						sales_invoice_count: tableData.reduce((sum, r) => sum + (r.sales_invoice_count || 0), 0),
+						total_sales_invoice_count: tableData.reduce((sum, r) => sum + (r.total_sales_invoice_count || 0), 0),
+						total_sales_order_amount: tableData.reduce((sum, r) => sum + (r.total_sales_order_amount || 0), 0),
+						total_sales_amount: tableData.reduce((sum, r) => sum + (r.total_sales_amount || 0), 0),
+						outstanding_amount: tableData.reduce((sum, r) => sum + (r.outstanding_amount || 0), 0),
+						paid_amount: tableData.reduce((sum, r) => sum + (r.paid_amount || 0), 0),
+						total_commission_earned: tableData.reduce((sum, r) => sum + (r.total_commission_earned || 0), 0),
+						unique_customers: new Set(tableData.flatMap(r => {
+							// This is approximate - actual unique count would need more complex logic
+							return [];
+						})).size
+					};
+
+					message += `<tfoot style="background: #f3f4f6; border-top: 2px solid #e5e7eb; font-weight: 600;">`;
+					message += `<tr>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; position: sticky; left: 0; background: #f3f4f6; z-index: 5;">TOTAL</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb;"></td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center;">`;
+					message += `<span style="color: #3b82f6;">${totals.sales_order_count}</span> / <span>${totals.total_sales_order_count - totals.sales_order_count}</span> / <span>${totals.total_sales_order_count}</span>`;
+					message += `</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center;">`;
+					message += `<span style="color: #10b981;">${totals.sales_invoice_count}</span> / <span>${totals.total_sales_invoice_count - totals.sales_invoice_count}</span> / <span>${totals.total_sales_invoice_count}</span>`;
+					message += `</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #059669;">${totals.total_sales_order_amount.toLocaleString()}</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #059669;">${totals.total_sales_amount.toLocaleString()}</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #dc2626;">${totals.outstanding_amount.toLocaleString()}</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #10b981;">${totals.paid_amount.toLocaleString()}</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right; color: #7c3aed;">${totals.total_commission_earned.toLocaleString()}</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: center;">-</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right;">-</td>`;
+					message += `<td style="padding: 12px; border-right: 1px solid #e5e7eb; text-align: right;">-</td>`;
+					message += `<td style="padding: 12px; text-align: center;">-</td>`;
+					message += `</tr>`;
+					message += `</tfoot>`;
+				}
+
+				message += `</table>`;
+				message += `</div>`;
+				message += `</div>`;
+
+				console.log('📊 Adding table message to chat');
+				addMessage('ai', message);
+			} else {
+				console.log('❌ Result status or table_data missing:', {
+					status: result.status,
+					hasTableData: !!result.table_data,
+					result: result
+				});
+				addMessage('ai', `❌ ${result.message || 'Failed to get all sales persons summary. Response: ' + JSON.stringify(result)}`);
+			}
+		} catch (error) {
+			if (typingId) hideTypingIndicator(typingId);
+			console.error('❌ Get all sales persons summary error:', error);
+			console.error('❌ Error stack:', error.stack);
+			addMessage('ai', `❌ Error fetching all sales persons summary: ${error.message || 'Unknown error'}. Please try again.`);
 		}
 	};
 

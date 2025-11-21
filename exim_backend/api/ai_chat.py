@@ -186,6 +186,10 @@ ACTIONS:
     - Use for: "sales person summary", "give summary for [name]", "complete info about [name] sales person", "show summary of [name]"
 17. get_sales_person_count - Count sales persons: {{"action": "get_sales_person_count", "filters": {{"enabled": 1}}, "execute_immediately": true}}
 18. get_sales_person_names - Get list of sales person names: {{"action": "get_sales_person_names", "filters": {{"enabled": 1}}, "limit": 50, "execute_immediately": true}}
+19. get_all_sales_persons_summary - Get comprehensive summary table for all sales persons (default: last 7 days): {{"action": "get_all_sales_persons_summary", "from_date": "2025-01-01", "to_date": "2025-01-31", "execute_immediately": true}}
+    - Returns: Table with all sales persons showing orders, invoices, amounts, outstanding, customers, conversion rates, etc.
+    - Use for: "all sales persons summary", "sales performance table", "compare all sales persons", "sales team performance", "show all sales persons data"
+    - Default date range: Last 7 days if not specified
 
 FILTER OPERATORS:
 - {{"$like": "%text%"}} - Partial match
@@ -252,6 +256,10 @@ Q: "Orders expected for delivery today" → {{"action": "dynamic_search", "docty
 Q: "Which customer has more sales orders?" → Use count_documents with filters grouped by customer, or use dynamic_search to get all sales orders and analyze
 Q: "Which sales order contains more items?" → Use get_document_details for each sales order to count items, or use dynamic_search with order_by based on item count if available
 Q: "Give sales person summary for Navneet" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+Q: "Show all sales persons summary" → {{"action": "get_all_sales_persons_summary", "execute_immediately": true}}
+Q: "Get sales performance table for all sales persons" → {{"action": "get_all_sales_persons_summary", "execute_immediately": true}}
+Q: "Compare all sales persons performance" → {{"action": "get_all_sales_persons_summary", "execute_immediately": true}}
+Q: "Show all sales persons data for last 7 days" → {{"action": "get_all_sales_persons_summary", "execute_immediately": true}}
 Q: "Show summary of Navneet sales person" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
 Q: "Complete info about Navneet Sales Person" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
 Q: "Sales person summary Navneet" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
@@ -1637,6 +1645,8 @@ def get_sales_person_summary():
 		
 		if handler:
 			sales_person = frappe.form_dict.get("sales_person")
+			from_date = frappe.form_dict.get("from_date")
+			to_date = frappe.form_dict.get("to_date")
 			
 			if not sales_person:
 				return {
@@ -1644,7 +1654,7 @@ def get_sales_person_summary():
 					"message": "sales_person parameter is required"
 				}
 			
-			return handler.get_sales_person_summary(sales_person)
+			return handler.get_sales_person_summary(sales_person, from_date=from_date, to_date=to_date)
 		else:
 			return {
 				"status": "error",
@@ -1655,6 +1665,58 @@ def get_sales_person_summary():
 		return {
 			"status": "error",
 			"message": f"Failed to get sales person summary: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_all_sales_persons_summary():
+	"""
+	Get comprehensive summary for all sales persons in table format.
+	Optionally filter by date range (default: last 7 days).
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_all_sales_persons_summary
+	Accepts:
+		- from_date: Optional start date (YYYY-MM-DD format, default: 7 days ago)
+		- to_date: Optional end date (YYYY-MM-DD format, default: today)
+		- filters: Optional filters for sales persons (JSON) - e.g., {"enabled": 1}
+	Returns: Table data with all sales persons and their summaries
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		from frappe.utils import today, add_days
+		
+		handler = get_handler("Sales Person")
+		
+		if handler:
+			from_date = frappe.form_dict.get("from_date")
+			to_date = frappe.form_dict.get("to_date")
+			filters_json = frappe.form_dict.get("filters")
+			
+			# Default to last 7 days if no dates provided
+			if not from_date:
+				from_date = str(add_days(today(), -7))
+			if not to_date:
+				to_date = str(today())
+			
+			# Parse filters if provided
+			filters = None
+			if filters_json:
+				if isinstance(filters_json, str):
+					filters = json.loads(filters_json)
+				else:
+					filters = filters_json
+			
+			return handler.get_all_sales_persons_summary(from_date=from_date, to_date=to_date, filters=filters)
+		else:
+			return {
+				"status": "error",
+				"message": "Sales Person handler not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get all sales persons summary error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get all sales persons summary: {str(e)}"
 		}
 
 
