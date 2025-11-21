@@ -1434,6 +1434,87 @@ def count_customers():
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_sales_person_count():
+	"""
+	Get total count of sales persons.
+	Optionally filter by enabled status, is_group, etc.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_sales_person_count
+	Accepts:
+		- filters: Optional filters (JSON) - e.g., {"enabled": 1}
+	Returns: Sales person count
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Person")
+		
+		if handler:
+			filters_json = frappe.form_dict.get("filters")
+			filters = None
+			if filters_json:
+				if isinstance(filters_json, str):
+					filters = json.loads(filters_json)
+				else:
+					filters = filters_json
+			
+			return handler.get_sales_person_count(filters)
+		else:
+			return {
+				"status": "error",
+				"message": "Sales Person handler not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get sales person count error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get sales person count: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_sales_person_names():
+	"""
+	Get list of sales person names.
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_sales_person_names
+	Accepts:
+		- filters: Optional filters (JSON) - e.g., {"enabled": 1}
+		- limit: Optional limit on number of results
+	Returns: List of sales person names with details
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Person")
+		
+		if handler:
+			filters_json = frappe.form_dict.get("filters")
+			limit = frappe.form_dict.get("limit")
+			
+			filters = None
+			if filters_json:
+				if isinstance(filters_json, str):
+					filters = json.loads(filters_json)
+				else:
+					filters = filters_json
+			
+			if limit:
+				limit = int(limit)
+			
+			return handler.get_sales_person_names(filters, limit)
+		else:
+			return {
+				"status": "error",
+				"message": "Sales Person handler not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get sales person names error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get sales person names: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 def get_customers_by_order_count():
 	"""
 	Get customers with most orders, ordered by order count.
