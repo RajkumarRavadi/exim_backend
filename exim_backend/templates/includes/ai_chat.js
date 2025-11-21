@@ -1289,6 +1289,12 @@
 				await handleGetTotalQuantitySold(action);
 			} else if (action.action === 'get_most_sold_items') {
 				await handleGetMostSoldItems(action);
+			} else if (action.action === 'get_sales_person_summary') {
+				await handleGetSalesPersonSummary(action);
+			} else if (action.action === 'get_sales_person_count') {
+				await handleGetSalesPersonCount(action);
+			} else if (action.action === 'get_sales_person_names') {
+				await handleGetSalesPersonNames(action);
 			} else if (action.action === 'search_customer') {
 				await handleSearchCustomer(action);
 			} else {
@@ -1609,9 +1615,19 @@
 			handleGetTotalQuantitySold(action);
 		} else if (action.action === 'get_most_sold_items') {
 			handleGetMostSoldItems(action);
+		} else if (action.action === 'get_sales_person_summary') {
+			handleGetSalesPersonSummary(action);
+		} else if (action.action === 'get_sales_person_count') {
+			handleGetSalesPersonCount(action);
+		} else if (action.action === 'get_sales_person_names') {
+			handleGetSalesPersonNames(action);
 		} else if (action.action === 'search_customer') {
 			// Legacy support
 			handleSearchCustomer(action);
+		} else {
+			console.warn('Unknown action in autoExecuteAction:', action.action);
+			// Fallback: try to use executeAction
+			executeAction(action);
 		}
 	};
 
@@ -2452,6 +2468,230 @@
 			hideTypingIndicator(typingId);
 			addMessage('ai', '❌ Error fetching most sold items. Please try again.', 'ai');
 			console.error('Get most sold items error:', error);
+		}
+	};
+
+	// Handle get sales person summary
+	const handleGetSalesPersonSummary = async (action) => {
+		let typingId;
+		try {
+			typingId = showTypingIndicator();
+			const sales_person = action?.sales_person;
+
+			if (!sales_person) {
+				hideTypingIndicator(typingId);
+				addMessage('ai', '❌ Sales person name is required');
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('sales_person', sales_person);
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_sales_person_summary', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			console.log('📊 Sales Person Summary API Response:', responseData);
+			const result = responseData.message || responseData;
+			console.log('📊 Parsed result:', result);
+			hideTypingIndicator(typingId);
+
+			if (result.status === 'success' && result.summary) {
+				const summary = result.summary;
+				let message = `<div style="max-width: 100%;">`;
+				message += `<h3 style="margin-bottom: 16px; color: #1f2937; font-size: 18px; font-weight: 600;">📊 Sales Person Summary: ${escapeHtml(summary.sales_person_name || sales_person)}</h3>`;
+
+				// Basic Info
+				message += `<div style="margin-bottom: 20px; padding: 16px; background: #f9fafb; border-radius: 8px;">`;
+				message += `<h4 style="margin-bottom: 12px; color: #374151; font-size: 15px; font-weight: 600;">Basic Information</h4>`;
+				message += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 14px;">`;
+				if (summary.employee) message += `<div><strong>Employee:</strong> ${escapeHtml(summary.employee)}</div>`;
+				if (summary.department) message += `<div><strong>Department:</strong> ${escapeHtml(summary.department)}</div>`;
+				message += `<div><strong>Status:</strong> ${summary.enabled ? '✅ Enabled' : '❌ Disabled'}</div>`;
+				if (summary.commission_rate) message += `<div><strong>Commission Rate:</strong> ${escapeHtml(summary.commission_rate)}</div>`;
+				message += `</div></div>`;
+
+				// Sales Orders
+				message += `<div style="margin-bottom: 20px; padding: 16px; background: #eff6ff; border-radius: 8px; border-left: 4px solid #3b82f6;">`;
+				message += `<h4 style="margin-bottom: 12px; color: #1e40af; font-size: 15px; font-weight: 600;">📦 Sales Orders</h4>`;
+				message += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 14px;">`;
+				message += `<div><strong>Submitted:</strong> <span style="color: #3b82f6; font-weight: 600;">${summary.sales_order_count || 0}</span></div>`;
+				message += `<div><strong>Draft:</strong> <span style="color: #6b7280;">${summary.draft_sales_order_count || 0}</span></div>`;
+				message += `<div><strong>Total:</strong> <span style="font-weight: 600;">${summary.total_sales_order_count || 0}</span></div>`;
+				if (summary.total_sales_order_amount) {
+					message += `<div><strong>Total Amount:</strong> <span style="color: #059669; font-weight: 600;">${escapeHtml(summary.total_sales_order_amount.toLocaleString())}</span></div>`;
+				}
+				message += `</div></div>`;
+
+				// Sales Invoices
+				message += `<div style="margin-bottom: 20px; padding: 16px; background: #f0fdf4; border-radius: 8px; border-left: 4px solid #10b981;">`;
+				message += `<h4 style="margin-bottom: 12px; color: #047857; font-size: 15px; font-weight: 600;">🧾 Sales Invoices</h4>`;
+				message += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 14px;">`;
+				message += `<div><strong>Submitted:</strong> <span style="color: #10b981; font-weight: 600;">${summary.sales_invoice_count || 0}</span></div>`;
+				message += `<div><strong>Draft:</strong> <span style="color: #6b7280;">${summary.draft_sales_invoice_count || 0}</span></div>`;
+				message += `<div><strong>Total:</strong> <span style="font-weight: 600;">${summary.total_sales_invoice_count || 0}</span></div>`;
+				if (summary.total_sales_amount) {
+					message += `<div><strong>Total Amount:</strong> <span style="color: #059669; font-weight: 600;">${escapeHtml(summary.total_sales_amount.toLocaleString())}</span></div>`;
+				}
+				message += `</div></div>`;
+
+				// Financial Summary
+				message += `<div style="margin-bottom: 20px; padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">`;
+				message += `<h4 style="margin-bottom: 12px; color: #92400e; font-size: 15px; font-weight: 600;">💰 Financial Summary</h4>`;
+				message += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 14px;">`;
+				if (summary.outstanding_amount) {
+					message += `<div><strong>Outstanding:</strong> <span style="color: #dc2626; font-weight: 600;">${escapeHtml(summary.outstanding_amount.toLocaleString())}</span></div>`;
+				}
+				if (summary.paid_amount) {
+					message += `<div><strong>Paid:</strong> <span style="color: #059669; font-weight: 600;">${escapeHtml(summary.paid_amount.toLocaleString())}</span></div>`;
+				}
+				if (summary.total_commission_earned) {
+					message += `<div><strong>Commission Earned:</strong> <span style="color: #7c3aed; font-weight: 600;">${escapeHtml(summary.total_commission_earned.toLocaleString())}</span></div>`;
+				}
+				message += `</div></div>`;
+
+				// Performance Metrics
+				message += `<div style="margin-bottom: 20px; padding: 16px; background: #f3e8ff; border-radius: 8px; border-left: 4px solid #8b5cf6;">`;
+				message += `<h4 style="margin-bottom: 12px; color: #6b21a8; font-size: 15px; font-weight: 600;">📈 Performance Metrics</h4>`;
+				message += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 14px;">`;
+				message += `<div><strong>Unique Customers:</strong> <span style="font-weight: 600;">${summary.unique_customers || 0}</span></div>`;
+				if (summary.average_order_value) {
+					message += `<div><strong>Avg Order Value:</strong> <span style="font-weight: 600;">${escapeHtml(summary.average_order_value.toLocaleString())}</span></div>`;
+				}
+				if (summary.average_invoice_value) {
+					message += `<div><strong>Avg Invoice Value:</strong> <span style="font-weight: 600;">${escapeHtml(summary.average_invoice_value.toLocaleString())}</span></div>`;
+				}
+				if (summary.conversion_rate) {
+					message += `<div><strong>Conversion Rate:</strong> <span style="font-weight: 600;">${escapeHtml(summary.conversion_rate.toFixed(1))}%</span></div>`;
+				}
+				message += `</div></div>`;
+
+				// Recent Activity
+				if (summary.recent_orders && summary.recent_orders.length > 0) {
+					message += `<div style="margin-bottom: 20px;">`;
+					message += `<h4 style="margin-bottom: 12px; color: #374151; font-size: 15px; font-weight: 600;">🕒 Recent Orders</h4>`;
+					summary.recent_orders.slice(0, 5).forEach(order => {
+						message += `<div style="padding: 8px; margin-bottom: 8px; background: #f9fafb; border-radius: 4px; font-size: 13px;">`;
+						message += `<strong>${escapeHtml(order.name)}</strong> - ${escapeHtml(order.customer_name || order.customer)} - ${escapeHtml(order.transaction_date || '')}`;
+						if (order.grand_total) {
+							message += ` - <span style="color: #059669; font-weight: 600;">${escapeHtml(order.grand_total.toLocaleString())}</span>`;
+						}
+						message += `</div>`;
+					});
+					message += `</div>`;
+				}
+
+				message += `</div>`;
+				console.log('📊 Adding message to chat');
+				addMessage('ai', message);
+			} else {
+				console.log('❌ Result status or summary missing:', {
+					status: result.status,
+					hasSummary: !!result.summary,
+					result: result
+				});
+				addMessage('ai', `❌ ${result.message || 'Failed to get sales person summary. Response: ' + JSON.stringify(result)}`);
+			}
+		} catch (error) {
+			if (typingId) hideTypingIndicator(typingId);
+			console.error('❌ Get sales person summary error:', error);
+			console.error('❌ Error stack:', error.stack);
+			addMessage('ai', `❌ Error fetching sales person summary: ${error.message || 'Unknown error'}. Please try again.`);
+		}
+	};
+
+	// Handle get sales person count
+	const handleGetSalesPersonCount = async (action) => {
+		let typingId;
+		try {
+			typingId = showTypingIndicator();
+
+			const formData = new FormData();
+			if (action?.filters) {
+				formData.append('filters', JSON.stringify(action.filters));
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_sales_person_count', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator(typingId);
+
+			if (result.status === 'success') {
+				addMessage('ai', `📊 Total Sales Persons: <strong>${result.total_count || 0}</strong>`);
+			} else {
+				addMessage('ai', `❌ ${result.message || 'Failed to get sales person count'}`);
+			}
+		} catch (error) {
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching sales person count. Please try again.', 'ai');
+			console.error('Get sales person count error:', error);
+		}
+	};
+
+	// Handle get sales person names
+	const handleGetSalesPersonNames = async (action) => {
+		let typingId;
+		try {
+			typingId = showTypingIndicator();
+
+			const formData = new FormData();
+			if (action?.filters) {
+				formData.append('filters', JSON.stringify(action.filters));
+			}
+			if (action?.limit) {
+				formData.append('limit', action.limit);
+			}
+
+			const response = await fetch('/api/method/exim_backend.api.ai_chat.get_sales_person_names', {
+				method: 'POST',
+				headers: {
+					'X-Frappe-CSRF-Token': getCSRFToken()
+				},
+				body: formData
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const responseData = await response.json();
+			const result = responseData.message || responseData;
+			hideTypingIndicator(typingId);
+
+			if (result.status === 'success' && result.names) {
+				let message = `<p><strong>Sales Person Names (${result.count}):</strong></p><ul style="margin-top: 12px;">`;
+				result.names.forEach(name => {
+					message += `<li style="margin-bottom: 6px;">${escapeHtml(name)}</li>`;
+				});
+				message += '</ul>';
+				addMessage('ai', message);
+			} else {
+				addMessage('ai', `❌ ${result.message || 'Failed to get sales person names'}`);
+			}
+		} catch (error) {
+			hideTypingIndicator(typingId);
+			addMessage('ai', '❌ Error fetching sales person names. Please try again.', 'ai');
+			console.error('Get sales person names error:', error);
 		}
 	};
 

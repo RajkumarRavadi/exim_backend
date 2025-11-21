@@ -181,6 +181,11 @@ ACTIONS:
 13. get_orders_by_item_group - Orders with items from specific group (Sales Order only): {{"action": "get_orders_by_item_group", "item_group": "Item Group Name", "execute_immediately": true}}
 14. get_total_quantity_sold - Total quantity sold for item (Sales Order only): {{"action": "get_total_quantity_sold", "item_code": "Item Code", "from_date": "this week", "to_date": "today", "execute_immediately": true}}
 15. get_most_sold_items - Most sold items aggregated (Sales Order only): {{"action": "get_most_sold_items", "limit": 5, "from_date": "this week", "execute_immediately": true}}
+16. get_sales_person_summary - Comprehensive summary for a sales person (Sales Person only): {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+    - Returns: Sales orders count, sales invoices count, total amounts, outstanding, unique customers, payment status, recent activity, etc.
+    - Use for: "sales person summary", "give summary for [name]", "complete info about [name] sales person", "show summary of [name]"
+17. get_sales_person_count - Count sales persons: {{"action": "get_sales_person_count", "filters": {{"enabled": 1}}, "execute_immediately": true}}
+18. get_sales_person_names - Get list of sales person names: {{"action": "get_sales_person_names", "filters": {{"enabled": 1}}, "limit": 50, "execute_immediately": true}}
 
 FILTER OPERATORS:
 - {{"$like": "%text%"}} - Partial match
@@ -246,6 +251,12 @@ Q: "Deliveries scheduled this week" → {{"action": "dynamic_search", "doctype":
 Q: "Orders expected for delivery today" → {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{"delivery_date": "today"}}, "execute_immediately": true}}
 Q: "Which customer has more sales orders?" → Use count_documents with filters grouped by customer, or use dynamic_search to get all sales orders and analyze
 Q: "Which sales order contains more items?" → Use get_document_details for each sales order to count items, or use dynamic_search with order_by based on item count if available
+Q: "Give sales person summary for Navneet" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+Q: "Show summary of Navneet sales person" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+Q: "Complete info about Navneet Sales Person" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+Q: "Sales person summary Navneet" → {{"action": "get_sales_person_summary", "sales_person": "Navneet", "execute_immediately": true}}
+Q: "How many sales persons are there?" → {{"action": "get_sales_person_count", "execute_immediately": true}}
+Q: "List all sales person names" → {{"action": "get_sales_person_names", "execute_immediately": true}}
 
 RULES:
 - ALWAYS specify doctype in action JSON
@@ -257,6 +268,8 @@ RULES:
 - For questions like "what is X of item Y" or "show me X for Y", use get_document_details
 - NEVER say "I cannot" or "field not available" - instead use get_document_details to get complete data
 - NEVER ask user to fetch details first - automatically use get_document_details
+- SALES PERSON SUMMARY RULE: When user asks for "summary", "complete info", or "details" about a sales person (especially with metrics like orders, invoices, amounts), use get_sales_person_summary instead of get_document_details. The summary provides comprehensive business metrics, while get_document_details only returns basic document fields.
+- For "sales person summary" or "complete info of [name] Sales Person", ALWAYS use get_sales_person_summary - it returns sales orders count, invoices count, amounts, customers, etc.
 - IMPORTANT: When providing text responses, use plain text or markdown format (use * for lists, ** for bold, ` for code). NEVER use HTML tags like <p>, <ul>, <li> in your responses - the system will format it automatically
 - SORTING: Use "order_by" in dynamic_search to sort results. Examples: "grand_total desc" (highest first), "grand_total asc" (lowest first), "modified desc" (newest first)
 - FINDING MAX/MIN: To find highest/lowest value, use dynamic_search with order_by and limit: 1. Example: {{"action": "dynamic_search", "doctype": "Sales Order", "filters": {{}}, "order_by": "grand_total desc", "limit": 1, "execute_immediately": true}}
@@ -1259,6 +1272,49 @@ def dynamic_search():
 		if handler:
 			# Check for special aggregation queries for Sales Order
 			if doctype == "Sales Order":
+				# Handle sales_team or sales_person filter (requires join with Sales Team child table)
+				sales_person_filter = None
+				if "sales_team" in filters:
+					# Extract sales person from sales_team filter
+					sales_team_filter = filters.pop("sales_team")
+					if isinstance(sales_team_filter, dict):
+						# Handle operators like $like
+						if "$like" in sales_team_filter:
+							# Extract the name from the like pattern (e.g., "%Navneet%" -> "Navneet")
+							like_pattern = sales_team_filter["$like"]
+							# Remove % wildcards
+							sales_person_filter = like_pattern.replace("%", "").strip()
+						elif "$in" in sales_team_filter:
+							# If it's an array, use first item
+							sales_person_filter = sales_team_filter["$in"][0] if sales_team_filter["$in"] else None
+						else:
+							# Direct value
+							sales_person_filter = sales_team_filter
+					else:
+						sales_person_filter = sales_team_filter
+				
+				# Also check for direct sales_person filter
+				if "sales_person" in filters:
+					sales_person_filter = filters.pop("sales_person")
+					if isinstance(sales_person_filter, dict):
+						if "$like" in sales_person_filter:
+							like_pattern = sales_person_filter["$like"]
+							sales_person_filter = like_pattern.replace("%", "").strip()
+				
+				# If we have a sales person filter, use SalesPersonHandler
+				if sales_person_filter:
+					from exim_backend.api.doctypes import get_handler
+					sales_person_handler = get_handler("Sales Person")
+					if sales_person_handler and hasattr(sales_person_handler, 'get_sales_orders_for_sales_person'):
+						result = sales_person_handler.get_sales_orders_for_sales_person(
+							sales_person_filter,
+							filters=filters,  # Pass remaining filters
+							limit=limit
+						)
+						if "sales_orders" in result:
+							result["results"] = result.pop("sales_orders")
+						return result
+				
 				# Handle customer group filter (requires join with Customer)
 				if "customer_group" in filters:
 					customer_group = filters.pop("customer_group")
@@ -1391,6 +1447,49 @@ def count_documents():
 		handler = get_handler(doctype)
 		
 		if handler:
+			# Special handling for Sales Order with sales_team/sales_person filter
+			if doctype == "Sales Order":
+				# Handle sales_team or sales_person filter (requires join with Sales Team child table)
+				sales_person_filter = None
+				if filters and "sales_team" in filters:
+					# Extract sales person from sales_team filter
+					sales_team_filter = filters.get("sales_team")
+					if isinstance(sales_team_filter, dict):
+						# Handle operators like $like
+						if "$like" in sales_team_filter:
+							# Extract the name from the like pattern (e.g., "%Navneet%" -> "Navneet")
+							like_pattern = sales_team_filter["$like"]
+							# Remove % wildcards
+							sales_person_filter = like_pattern.replace("%", "").strip()
+						elif "$in" in sales_team_filter:
+							# If it's an array, use first item
+							sales_person_filter = sales_team_filter["$in"][0] if sales_team_filter["$in"] else None
+						else:
+							# Direct value
+							sales_person_filter = sales_team_filter
+					else:
+						sales_person_filter = sales_team_filter
+				
+				# Also check for direct sales_person filter
+				if filters and "sales_person" in filters:
+					sales_person_filter = filters.get("sales_person")
+					if isinstance(sales_person_filter, dict):
+						if "$like" in sales_person_filter:
+							like_pattern = sales_person_filter["$like"]
+							sales_person_filter = like_pattern.replace("%", "").strip()
+				
+				# If we have a sales person filter, use SalesPersonHandler
+				if sales_person_filter:
+					sales_person_handler = get_handler("Sales Person")
+					if sales_person_handler and hasattr(sales_person_handler, 'count_sales_orders_for_sales_person'):
+						# Create filters dict without sales_team/sales_person
+						remaining_filters = {k: v for k, v in (filters or {}).items() if k not in ["sales_team", "sales_person"]}
+						result = sales_person_handler.count_sales_orders_for_sales_person(
+							sales_person_filter,
+							filters=remaining_filters if remaining_filters else None
+						)
+						return result
+			
 			# Use handler's count method, or custom method if available
 			if hasattr(handler, 'count_with_breakdown'):
 				return handler.count_with_breakdown()
@@ -1511,6 +1610,51 @@ def get_sales_person_names():
 		return {
 			"status": "error",
 			"message": f"Failed to get sales person names: {str(e)}"
+		}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+def get_sales_person_summary():
+	"""
+	Get comprehensive summary for a sales person including:
+	- Sales Orders count (submitted and draft)
+	- Sales Invoices count (submitted and draft)
+	- Total sales amounts
+	- Outstanding amounts
+	- Unique customers handled
+	- Payment status breakdown
+	- Recent activity
+	- And more metrics
+	
+	API Endpoint: /api/method/exim_backend.api.ai_chat.get_sales_person_summary
+	Accepts:
+		- sales_person: Sales Person name/ID (required)
+	Returns: Comprehensive summary with all metrics
+	"""
+	try:
+		from exim_backend.api.doctypes import get_handler
+		handler = get_handler("Sales Person")
+		
+		if handler:
+			sales_person = frappe.form_dict.get("sales_person")
+			
+			if not sales_person:
+				return {
+					"status": "error",
+					"message": "sales_person parameter is required"
+				}
+			
+			return handler.get_sales_person_summary(sales_person)
+		else:
+			return {
+				"status": "error",
+				"message": "Sales Person handler not available"
+			}
+	except Exception as e:
+		frappe.logger().error(f"Get sales person summary error: {str(e)}")
+		return {
+			"status": "error",
+			"message": f"Failed to get sales person summary: {str(e)}"
 		}
 
 
